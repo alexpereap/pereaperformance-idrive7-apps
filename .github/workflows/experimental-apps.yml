@@ -6,6 +6,7 @@ on:
       - 'apps/zf8hp/**'
       - 'apps/live_adjustments/**'
       - 'apps/live_data/**'
+      - 'apps/mhd_flex/**'
       - 'kit/runtime/diag.js'
       - 'kit/runtime/readonly-diag.js'
       - 'kit/runtime/sgbd.js'
@@ -15,6 +16,7 @@ on:
       - 'kit/tools/test_bm3_protocol.js'
       - 'kit/tools/test_zf8hp.js'
       - 'kit/tools/test_live_adjustments.js'
+      - 'kit/tools/test_mhd_flex.js'
       - 'kit/tools/test_diag_options.js'
       - 'kit/tools/test_diag_replies.js'
       - '.github/workflows/experimental-apps.yml'
@@ -23,6 +25,7 @@ on:
       - 'apps/zf8hp/**'
       - 'apps/live_adjustments/**'
       - 'apps/live_data/**'
+      - 'apps/mhd_flex/**'
       - 'kit/runtime/diag.js'
       - 'kit/runtime/readonly-diag.js'
       - 'kit/runtime/sgbd.js'
@@ -32,6 +35,7 @@ on:
       - 'kit/tools/test_bm3_protocol.js'
       - 'kit/tools/test_zf8hp.js'
       - 'kit/tools/test_live_adjustments.js'
+      - 'kit/tools/test_mhd_flex.js'
       - 'kit/tools/test_diag_options.js'
       - 'kit/tools/test_diag_replies.js'
       - '.github/workflows/experimental-apps.yml'
@@ -50,6 +54,7 @@ jobs:
       - run: node kit/tools/test_bm3_protocol.js
       - run: node kit/tools/test_zf8hp.js
       - run: node kit/tools/test_live_adjustments.js
+      - run: node kit/tools/test_mhd_flex.js
       - run: node kit/tools/test_diag_options.js
       - run: node kit/tools/test_diag_replies.js
       - run: node kit/tools/test_live_data.js
