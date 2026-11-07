@@ -1,0 +1,156 @@
+# English<TAB>Русский. Только отображаемый текст; поля протокола и значения настроек не изменяются.
+# Kit: the strings the kit draws by itself (gauges, the settings sheet, badges, the HMI menus)
+Settings	Настройки
+Version	Версия
+Next page	Следующая страница
+Previous page	Предыдущая
+Colour theme	Цветовая тема
+M Red	M Red
+M Tricolour	M Tricolour
+Ice White	Ice White
+Night Amber	Night Amber
+Demo data	Демоданные
+Auto	Авто
+Always	Всегда
+Never	Никогда
+On	Вкл.
+Off	Выкл.
+No	Нет
+Renderer	Рендерер
+GPU 60 fps (default)	GPU 60 fps (по умолчанию)
+Software	Программный
+Screen layout	Компоновка экрана
+Full screen	Полный экран
+Standard	Стандартный
+DEMO	ДЕМО
+EST.	ОЦЕНКА
+READY	ГОТОВО
+Ready	Готово
+PEAK	ПИК
+FROM	ОТ
+WHEN	КОГДА
+READ	ЧТЕНИЕ
+FULL	ПОЛНЫЙ
+RANGE	ЗАПАС
+Tyres	Шины
+Front	Перед
+FRONT	ПЕРЕД
+FL	ПЛ
+FR	ПП
+RL	ЗЛ
+RR	ЗП
+no diagnostic link	нет диагностической связи
+diagnostic link down	диагностическая связь потеряна
+target	цель
+max	макс.
+min	мин
+from	из
+front	перед
+COLD	ХОЛОДНО
+Peak	Пик
+error	ошибка
+Now	Сейчас
+LEFT	ЛЕВО
+RIGHT	ПРАВО
+ACCEL	РАЗГОН
+BRAKE	ТОРМОЖЕНИЕ
+TOP	МАКС.
+MIN	МИН
+Range	Запас хода
+Signals	Сигналы
+Totals	Итого
+now	сейчас
+link down	связь потеряна
+available	доступно
+No answer	Нет ответа
+no answer	нет ответа
+info	инфо
+more	ещё
+(default)	(по умолчанию)
+LAST	ПОСЛЕДНИЙ
+record	рекорд
+over	более
+no link	нет связи
+at	при
+cell	ячейка
+in	через
+by	к
+or	или
+of	из
+Reading	Чтение
+ACTIVE	АКТИВНАЯ
+PENDING	ОЖИДАЕТ
+out of range	вне диапазона
+pending	ожидание
+Reset drive totals	Сбросить итоги поездки
+Drive	Поездка
+DRAWING	ПОТРЕБЛЕНИЕ
+IDLE	ОЖИДАНИЕ
+READING	ЧТЕНИЕ
+NO DIAGNOSTIC LINK	НЕТ ДИАГНОСТИЧЕСКОЙ СВЯЗИ
+DONE	ГОТОВО
+peak	пик
+Open	Открыть
+Close	Закрыть
+GPU 60 fps	GPU 60 fps
+Reset	Сбросить
+Diagnostic	Диагностика
+REQUESTED	ЗАПРОШЕНО
+TARGET	ЦЕЛЬ
+CLOSED	Закрыто
+ERROR	ОШИБКА
+MAP	ПРОШИВКА
+Map	Карта
+NONE	НЕТ
+OFF	Выкл.
+OPEN	Открыто
+Gear	Передача
+IDENTIFYING	ПОИСК EGS
+LINK STALE	ДАННЫЕ УСТАРЕЛИ
+NO LINK	НЕТ СВЯЗИ
+Record	Запись
+down	вниз
+up	вверх
+Up	Вверх
+Down	Вниз
+Gauges	Приборы
+Layout	Макет
+Fuel	Топливо
+running	работает
+starting	запуск
+on	вкл.
+page	страница
+Controller	Блок управления
+Default	Стандартный
+Ethanol	Этанол
+CLOSE	Закрыто
+ON	Вкл.
+Back	Назад
+Done	Готово
+number	число
+read	прочитано
+off	выкл.
+Error	Ошибка
+Confirm	Подтвердить
+not available	недоступно
+
+# Flex Fuel (perea_mhd_flex)
+Flex Fuel	Флекс-топливо
+Ethanol Content (Active)	Содержание этанола (активное)
+Ethanol Content (CAN)	Содержание этанола (CAN)
+Flex fuel active	Флекс-топливо активно
+Flex fuel disabled	Флекс-топливо отключено
+No diagnostic link	Нет диагностической связи
+Diagnostic link down	Диагностическая связь потеряна
+Looking for MHD on the DME	Поиск MHD в DME
+MHD not found on the DME	MHD не найден в DME
+Identifying the DME	Идентификация DME
+ROM not supported	ROM не поддерживается
+Defining data identifier	Определение идентификатора данных
+Waiting for the DME	Ожидание ответа DME
+NO MHD	НЕТ MHD
+OTHER ROM	ДРУГОЙ ROM
+DME ERROR	ОШИБКА DME
+MISMATCH	РАСХОЖДЕНИЕ
+Active and CAN differ	Активное и CAN расходятся
+Sensor reads	Датчик показывает

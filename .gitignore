@@ -1,0 +1,26 @@
+# BMW's SDK: extract it from your own head unit (kit/tools/extract_sdk.js), never commit it
+oap-sdk/
+# build output and previews (every .mgu contains BMW's SDK)
+dist/
+/preview/
+/out/
+*.mgu
+*.tgz
+# local captures and car data
+/captures/
+*.pcap
+*.pcapng
+*.dlt
+*.log
+*.pem
+*.key
+# tools
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+kit/tools/.font-cache/
+# Claude Code's local files
+.claude/
+CLAUDE.md
