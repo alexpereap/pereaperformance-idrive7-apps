@@ -155,5 +155,17 @@
   "DME ERROR": "DME 오류",
   "MISMATCH": "불일치",
   "Active and CAN differ": "적용값과 CAN 값이 다릅니다",
-  "Sensor reads": "센서 측정값"
+  "Sensor reads": "센서 측정값",
+  "Fuel in tank": "탱크 연료량",
+  "Target ethanol": "목표 에탄올",
+  "Ethanol purity": "에탄올 순도",
+  "Tank capacity": "탱크 용량",
+  "Ethanol to add": "추가할 에탄올",
+  "No fuel reading": "연료 데이터 없음",
+  "No ethanol reading": "에탄올 데이터 없음",
+  "Target reached": "목표 도달",
+  "Purity below target": "순도가 목표보다 낮음",
+  "Purity": "순도",
+  "Tank after": "주유 후 탱크",
+  "Exceeds tank capacity": "탱크 용량 초과"
 }

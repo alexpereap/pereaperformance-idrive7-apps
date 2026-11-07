@@ -10,7 +10,7 @@ from this repository: no BMW SDK leaves the car, and none is in this repository.
 
 | App | Id | What it does |
 |---|---|---|
-| **Flex Fuel** | `perea_mhd_flex` | The ethanol content an **MHD-flashed DME** runs on, as two dials: *Ethanol Content (Active)*, what the tune uses, and *Ethanol Content (CAN)*, what the flex fuel sensor reports. Read-only over the car's own diagnostic link. Flags a map that ignores the sensor and a mismatch between the two. Details, protocol and how to add your ROM: [apps/perea_mhd_flex/README.md](apps/perea_mhd_flex/README.md). |
+| **Flex Fuel** | `perea_mhd_flex` | The ethanol content an **MHD-flashed DME** runs on, as two dials: *Ethanol Content (Active)*, what the tune uses, and *Ethanol Content (CAN)*, what the flex fuel sensor reports; a third dial with the fuel in the tank (gallons and litres) and a **blend calculator**: how much ethanol to add to reach a target. Read-only over the car's own diagnostic link. Flags a map that ignores the sensor and a mismatch between the two. Details, protocol and how to add your ROM: [apps/perea_mhd_flex/README.md](apps/perea_mhd_flex/README.md). |
 
 ![Flex Fuel](docs/screens/perea_mhd_flex.png)
 

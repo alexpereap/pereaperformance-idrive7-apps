@@ -7,7 +7,10 @@ CAN ethanol analyser. Under them a note says **Flex fuel active** (green) while 
 the ethanol, and **Flex fuel disabled** when Active reads 0 (a map without flex fuel): in amber,
 with the sensor's reading, when CAN still sees ethanol. When Active and CAN are 10 points or more
 apart (the tune still blending after a fill-up, or a map that does not follow the sensor) the
-header says **MISMATCH**. The app only reads; nothing is written to the car.
+header says **MISMATCH**. A third dial shows the **fuel in the tank** (US gallons, the litres
+under it), and under the dials the **blend calculator** says how much ethanol to add, at the
+purity set in Settings, to take the tank from the sensor's reading to a target blend. The app
+only reads; nothing is written to the car.
 
 ![Flex Fuel](../../docs/screens/perea_mhd_flex.png)
 
@@ -41,11 +44,53 @@ things to know:
 
 No diagnostic session change, no security access, no writes (`2E` / `3D`), no routines.
 
+## Fuel level and the blend calculator
+
+The fuel in the tank is the cluster's own figure, the SOME/IP field
+`de.bmw.infotainment.KombiIF` / `statusRangeTankStatus` / `fluidLevelFuelTank` (litres, as the
+Live Data app's *Fuel in the tank* shows it; `255` and up means no data). The field is read again
+every 10 s, since a car may not notify it, and a reading older than 60 s counts as gone (the dial
+shows `--`). The raw value goes to the app's log once a minute (`fluidLevelFuelTank raw=...`) to
+check its resolution on your car: if the cluster sends whole litres, the dial reads `24.0 L`.
+The interface is `_optional` in `app.json`: a unit without it installs the app without the dial.
+
+The dial is in **US gallons** (one decimal, `1 gal = 3.785 L`) over the **Tank capacity** set in
+Settings, with the litres under it: `1.7 gal (6.5 L)`.
+
+**The calculator.** With `V` litres in the tank at `C` % ethanol (the *CAN* reading: what the
+sensor measures), the ethanol to add at purity `P` % to reach the target `T` % comes from the
+ethanol balance `(V·C + x·P) / (V + x) = T`, so
+
+```
+x = V · (T − C) / (P − T)
+```
+
+Volumes are taken as additive (mixing ethanol and petrol shrinks the volume by under 1 %). The
+example 6.5 L at 12 % to E65 with ethanol at 99 % gives 10.1 L (2.7 gal). The result row says
+**Ethanol to add 2.7 gal (10.1 L)**, with the purity and the tank afterwards (`16.6 / 60 L`)
+under it, or **Exceeds tank capacity (+N L)** in amber when the blend would not fit. Instead of a
+number it says *No fuel reading*, *No ethanol reading*, *Target reached* (the target is at or
+under the sensor's reading: this version only adds ethanol) or *Purity below target* (the ethanol
+is not purer than the target, so no amount reaches it). A later version will offer pump petrol +
+ethanol as two amounts (`calc.js` is laid out for a second output).
+
+| Setting | Values | Default | |
+|---|---|---|---|
+| **Target ethanol** | 10..100 %, in steps of 1 | 85 % | the blend to reach; also moved by the **−5 / +5** buttons on the page |
+| **Ethanol purity** | 10..100 %, in steps of 1 | 99 % | the ethanol you pour in (E85 from the pump: 85 or less) |
+| **Tank capacity** | 40..100 L | 60 L | the fuel dial's scale and the overflow warning |
+
+The values are lists, so only those can be chosen (in the kit's Settings sheet and in the HMI's
+own settings screen alike). The −5 / +5 buttons are drawn only where the kit runs the screen (the
+Store's renderer with touch routing); they keep the target within 10..100. Without them the
+target is changed in Settings.
+
 ## Screen and states
 
-Two `G.radial` dials (0-100 %) with the number in the middle, the note under them, and the
-Perea Performance logo at the bottom. The header badge says what is going on when the dials
-show `--`:
+Three `G.radial` dials across the top (ethanol 0-100 %, the fuel over the tank's capacity) with
+the number in the middle; under them the calculator on the left (target row, result, detail) and
+the link's note and detail on the right, and the Perea Performance logo bottom right. The
+header badge says what is going on when the ethanol dials show `--`:
 
 | Badge | Note | Meaning |
 |---|---|---|
@@ -59,7 +104,8 @@ show `--`:
 | `DME ERROR` | Waiting for the DME | a refusal or a definition that will not hold; backoff, then start over |
 
 Code: `protocol.js` (bytes in and out, pure), `poller.js` (the states, one request in flight),
-`ui.js` (the screen), `main.js` (wiring, demo), `logo.js` (generated, see below).
+`calc.js` (the blend arithmetic, pure), `ui.js` (the screen), `main.js` (wiring, the fuel
+signal, demo), `logo.js` (generated, see below).
 
 ## Your ROM
 
@@ -109,7 +155,7 @@ shows on the dark themes). It needs Pillow (`pip install pillow`).
 ## Build and test
 
 ```sh
-node kit/tools/test_mhd_flex.js                 # protocol, poller states, filters, screen, main (no car, no SDK)
+node kit/tools/test_mhd_flex.js                 # protocol, poller states, filters, calculator, screen, main (no car, no SDK)
 python3 kit/tools/build.py --preview-only perea_mhd_flex
 node kit/tools/preview.js dist/perea_mhd_flex out/    # frames as PNG (demo data)
 node kit/tools/emu.js perea_mhd_flex            # the app in the browser (demo data: nothing answers UDS there)
@@ -150,7 +196,7 @@ python3 kit/tools/build.py perea_mhd_flex
 ```
 
 ```sh
-node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.0.0.tgz
+node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.1.0.tgz
 ```
 
 The package lands in `<stick>/mgu-repo/local/` with a generated catalog; install it from the

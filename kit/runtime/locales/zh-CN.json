@@ -134,5 +134,17 @@
   "DME ERROR": "DME 错误",
   "MISMATCH": "不一致",
   "Active and CAN differ": "生效值与 CAN 值不一致",
-  "Sensor reads": "传感器读数"
+  "Sensor reads": "传感器读数",
+  "Fuel in tank": "油箱燃油",
+  "Target ethanol": "目标乙醇",
+  "Ethanol purity": "乙醇纯度",
+  "Tank capacity": "油箱容量",
+  "Ethanol to add": "需加乙醇",
+  "No fuel reading": "无燃油读数",
+  "No ethanol reading": "无乙醇读数",
+  "Target reached": "已达目标",
+  "Purity below target": "纯度低于目标",
+  "Purity": "纯度",
+  "Tank after": "加注后油箱",
+  "Exceeds tank capacity": "超出油箱容量"
 }

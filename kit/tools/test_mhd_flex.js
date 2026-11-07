@@ -1,7 +1,8 @@
 'use strict';
 // Flex Fuel: the MHD ethanol protocol and the poller against in-memory DMEs (MHD on the known ROM, a stock
-// DME, MHD on another ROM, a DME that forgets the identifier, a quiet one), the accept filters, the screen
-// in every state (software canvas and GPU recorder) and main.js with the kit stubbed. No SDK or car needed:
+// DME, MHD on another ROM, a DME that forgets the identifier, a quiet one), the accept filters, the blend
+// calculator, the screen in every state (software canvas and GPU recorder) with its -5 / +5 buttons, and
+// main.js with the kit stubbed (settings, the cluster's fuel signal). No SDK or car needed:
 //   node kit/tools/test_mhd_flex.js
 const assert = require('assert');
 const path = require('path');
@@ -21,6 +22,7 @@ Module._load = function (req, parent, isMain) {
 const P = require(path.join(app, 'protocol'));
 const { Poller } = require(path.join(app, 'poller'));
 const UI = require(path.join(app, 'ui'));
+const C = require(path.join(app, 'calc'));
 const LOGO = require(path.join(app, 'logo'));
 const G = require(path.join(kit, 'gauges'));
 const { Canvas } = require(path.join(kit, 'canvas'));
@@ -319,47 +321,135 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
         assert.strictEqual(d.maxInflight, 1);
     }
 
+    /* ---------- the blend calculator ---------- */
+    {
+        const b = (litres, can, target, purity, tank) => C.blend({ litres, can, target, purity, tank });
+        // the user's example: 6.5 l at 12 % to E65 - with pure ethanol, with the default 99 %, and with E85
+        assert.deepStrictEqual(b(6.5, 12, 65, 100, 60), { status: 'ok', litres: 9.8, gallons: 2.6, totalLitres: 16.3, overflowLitres: 0 });
+        assert.deepStrictEqual(b(6.5, 12, 65, 99, 60), { status: 'ok', litres: 10.1, gallons: 2.7, totalLitres: 16.6, overflowLitres: 0 });
+        assert.deepStrictEqual(b(6.5, 12, 65, 85, 60), { status: 'ok', litres: 17.2, gallons: 4.6, totalLitres: 23.7, overflowLitres: 0 });
+        // 1.7 gal is 6.4 l: the dial's gallons round-trip
+        assert.strictEqual(C.round1(C.toGallons(6.5)), 1.7);
+        assert.strictEqual(Math.abs(C.GAL - 3.7854) < 0.001, true);
+        // what cannot be computed, in the order the screen reports it
+        assert.strictEqual(b(null, 12, 65, 99, 60).status, 'no-fuel');
+        assert.strictEqual(b(0, 12, 65, 99, 60).status, 'no-fuel');
+        assert.strictEqual(b(NaN, 12, 65, 99, 60).status, 'no-fuel');
+        assert.strictEqual(b(6.5, null, 65, 99, 60).status, 'no-ethanol');
+        assert.strictEqual(b(6.5, 70, 65, 99, 60).status, 'reached');
+        assert.strictEqual(b(6.5, 65, 65, 99, 60).status, 'reached');
+        assert.strictEqual(b(6.5, 12, 65, 60, 60).status, 'purity');
+        assert.strictEqual(b(6.5, 12, 65, 65, 60).status, 'purity');
+        assert.strictEqual(b(6.5, null, 65, 99, 60).litres, null);
+        // more than the tank takes: 50 l of E10 to E85 needs 250 l of ethanol
+        assert.deepStrictEqual(b(50, 10, 85, 100, 60), { status: 'ok', litres: 250, gallons: 66, totalLitres: 300, overflowLitres: 240 });
+        assert.strictEqual(b(50, 10, 85, 100, null).overflowLitres, 0);     // no capacity known: no warning
+    }
+
     /* ---------- the screen in every state, software and GPU ---------- */
     const states = ['no-link', 'link-down', 'probing', 'no-mhd', 'identifying', 'unsupported-rom', 'defining', 'reading', 'error'];
     for (const name of Object.keys(themes.themes || { m_tricolour: 1, m_red: 1, ice: 1, amber: 1 })) {
         const t = themes.theme(name);
         for (const state of states) {
             const v = { state, active: state === 'reading' ? 12 : null, can: state === 'reading' ? 12 : null, stale: false,
-                seen: ['00005C64146E06'], mhd: { version: '0120' }, profile: P.PROFILES[0].name, demo: false };
+                seen: ['00005C64146E06'], mhd: { version: '0120' }, profile: P.PROFILES[0].name, demo: false,
+                fuel: state === 'reading' ? 24.6 : null, target: 85, purity: 99, tankCap: 60 };
             const r = new Recorder(UI.W, UI.H);
             UI.draw(r, G, t, v, LOGO);
             play(r.words(), new Canvas(UI.W, UI.H));      // the software path: the recording played into a canvas
         }
-        UI.draw(new Recorder(UI.W, UI.H), G, t, { state: 'reading', active: 70, can: 72, demo: true }, LOGO);
-        [[45, 70], [0, 12], [null, 70], [85, null]].forEach(([active, can]) => {
+        UI.draw(new Recorder(UI.W, UI.H), G, t, { state: 'reading', active: 70, can: 72, demo: true }, LOGO);   // (no settings in the view: the defaults)
+        [[45, 70, 24.6], [0, 12, 24.6], [null, 70, 24.6], [85, null, 24.6], [12, 12, null], [12, 12, 50]].forEach(([active, can, fuel]) => {
             const r = new Recorder(UI.W, UI.H);
-            UI.draw(r, G, t, { state: 'reading', active, can, stale: false, mhd: { version: '0120' }, profile: P.PROFILES[0].name, did: 'F303', lastReply: '22F303 -> 62F303FF46', demo: false }, LOGO);
+            UI.draw(r, G, t, { state: 'reading', active, can, fuel, target: 85, purity: 99, tankCap: 60, stale: false, mhd: { version: '0120' }, profile: P.PROFILES[0].name, did: 'F303', lastReply: '22F303 -> 62F303FF46', demo: false }, LOGO);
             play(r.words(), new Canvas(UI.W, UI.H));
         });
+    }
+
+    /* ---------- the calculator's rows and the target buttons ---------- */
+    {
+        const t = themes.theme('m_tricolour');
+        const v = { state: 'reading', active: 12, can: 12, fuel: 6.5, target: 65, purity: 99, tankCap: 60, stale: false, demo: false };
+        assert.strictEqual(UI.fuelLine(v), '(6.5 L)');
+        assert.strictEqual(UI.fuelLine({ fuel: null }), '--');
+        assert.deepStrictEqual(UI.inputs({}), { litres: null, can: null, target: 85, purity: 99, tank: 60 });   // a view without the settings
+        let r = UI.result(v, t);
+        assert.deepStrictEqual(r, { text: '2.7 gal (10.1 L)', colour: t.accent, literal: true, detail: { text: 'Purity 99 %   ·   Tank after 16.6 / 60 L', colour: t.dim } });
+        r = UI.result(Object.assign({}, v, { fuel: null }), t);
+        assert.deepStrictEqual([r.text, r.colour, r.literal, r.detail.text], ['No fuel reading', t.dim, false, 'Purity 99 %']);
+        assert.strictEqual(UI.result(Object.assign({}, v, { can: null }), t).text, 'No ethanol reading');
+        assert.strictEqual(UI.result(Object.assign({}, v, { can: 70 }), t).text, 'Target reached');
+        r = UI.result(Object.assign({}, v, { purity: 60 }), t);
+        assert.deepStrictEqual([r.text, r.colour], ['Purity below target', t.warn]);
+        r = UI.result(Object.assign({}, v, { fuel: 50, can: 10, target: 85, purity: 100 }), t);
+        assert.deepStrictEqual([r.text, r.detail], ['66.0 gal (250.0 L)', { text: 'Exceeds tank capacity (+240.0 L)', colour: t.warn }]);
+        // the buttons: targets on a page the kit runs (cv.own), none elsewhere; they move the target by 5
+        let got = null;
+        const own = new Recorder(UI.W, UI.H);
+        own.own = true;
+        UI.draw(own, G, t, Object.assign({}, v, { setTarget: (d) => { got = d; } }), LOGO);
+        assert.deepStrictEqual(own.targets.map((q) => q.key).sort(), ['target+5', 'target-5']);
+        own.targets.find((q) => q.key === 'target+5').run();
+        assert.strictEqual(got, UI.TARGET_STEP);
+        own.targets.find((q) => q.key === 'target-5').run();
+        assert.strictEqual(got, -UI.TARGET_STEP);
+        play(own.words(), new Canvas(UI.W, UI.H));
+        const hmi = new Recorder(UI.W, UI.H);
+        UI.draw(hmi, G, t, v, LOGO);
+        assert.strictEqual(hmi.targets.length, 0);
+        UI.draw(new Recorder(UI.W, UI.H), G, t, Object.assign({}, v, { setTarget: undefined }), LOGO);   // no handler: the buttons still draw
     }
     assert.ok(LOGO.w === 180 && LOGO.h > 40 && LOGO.runs.length > 100 && LOGO.palette.every((c) => /^#[0-9a-f]{8}$/.test(c)));
 
     /* ---------- main.js with the kit stubbed: no transport -> demo, one frame drawn ---------- */
     require(path.join(app, 'main'));
     assert.ok(mguApp && typeof mguApp.start === 'function');
-    const vals = { theme: 'm_tricolour', layout: 'full', renderer: 'auto', demo: 'auto' };
-    let frames = 0, loopFn = null;
+    const vals = { theme: 'm_tricolour', layout: 'full', renderer: 'auto', demo: 'auto', target: 85, purity: 99, tank: 60 };
+    let frames = 0, loopFn = null, last = null, watched = null, kicks = 0;
+    const changes = [], sets = [];
     const ctx = {
         ui: { image: async () => { frames++; }, onVisible() {}, isVisible: () => true, onClick() {}, text() {} },
-        settings: { get: (k) => vals[k], onChange() {} },
+        settings: { get: (k) => vals[k], set: (k, v) => { vals[k] = v; sets.push([k, v]); changes.forEach((fn) => fn(k, v)); }, onChange: (fn) => changes.push(fn) },
         log: quiet,
         spec: { config: { dynamicDids: ['F303', 'F301'], pollMs: 500 } },
-        signals: { proxy: async () => { throw new Error('preview'); } },
+        signals: {
+            proxy: async () => { throw new Error('preview'); },
+            watch: async (iface, inst, handlers, log, opts) => { watched = { iface, inst, handlers, opts }; return { iface, available: false, error: 'stub', shutdown: () => Promise.resolve() }; },
+        },
         theme: () => themes.theme(vals.theme),
-        canvas: (w, h) => new Recorder(w, h),
-        loop: (name, fps, fn) => { loopFn = fn; return { stop() {}, kick() {} }; },
+        canvas: (w, h) => { last = new Recorder(w, h); last.own = true; return last; },
+        loop: (name, fps, fn) => { loopFn = fn; return { stop() {}, kick() { kicks++; } }; },
         onTab() {}, hideButton() {},
     };
     await mguApp.start(ctx);
     assert.strictEqual(frames, 1);
     await loopFn();
     assert.strictEqual(frames, 2);
+    // the cluster's fuel level is watched as the Live Data app does it
+    assert.ok(watched && watched.iface === 'de.bmw.infotainment.KombiIF' && watched.inst === '1' && typeof watched.handlers.statusRangeTankStatus === 'function');
+    assert.deepStrictEqual(watched.opts, { pollMs: 10000 });
+    // the page's buttons move the target setting by 5 within 10..100 (the setting's steps)
+    const press = (key) => last.targets.find((q) => q.key === key).run();
+    press('target+5');
+    assert.strictEqual(vals.target, 90);
+    assert.strictEqual(sets.length, 1);
+    vals.target = 100; press('target+5'); assert.strictEqual(vals.target, 100);
+    vals.target = 10; press('target-5'); assert.strictEqual(vals.target, 10);
+    vals.target = 'bad'; press('target+5'); assert.strictEqual(vals.target, 90);    // a value that is not a number: from the default
+    assert.ok(kicks >= 4, 'a change of setting redraws');
+    // the fuel reading: litres as sent, 255 is no data; the demo supplies its own while demo is on
+    vals.demo = 'off';
+    watched.handlers.statusRangeTankStatus({ fluidLevelFuelTank: 24 });
+    await loopFn();
+    assert.ok(last.words().length > 0);
+    watched.handlers.statusRangeTankStatus({ fluidLevelFuelTank: 255 });
+    await loopFn();
+    watched.handlers.statusRangeTankStatus({});
+    watched.handlers.statusRangeTankStatus(null);
+    await loopFn();
+    assert.strictEqual(frames, 5);
+    vals.demo = 'auto';
     await new Promise((r) => setTimeout(r, 30));     // the poller's loop idles in no-link without throwing
-    console.log('Flex Fuel checks passed (protocol, poller states, filters, screen, main).');
+    console.log('Flex Fuel checks passed (protocol, poller states, filters, calculator, screen, main).');
     process.exit(0);
 })().catch((e) => { console.log('FAIL ' + (e && e.stack || e)); process.exit(1); });

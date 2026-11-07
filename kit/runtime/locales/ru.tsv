@@ -154,3 +154,15 @@ DME ERROR	ОШИБКА DME
 MISMATCH	РАСХОЖДЕНИЕ
 Active and CAN differ	Активное и CAN расходятся
 Sensor reads	Датчик показывает
+Fuel in tank	Топливо в баке
+Target ethanol	Целевой этанол
+Ethanol purity	Чистота этанола
+Tank capacity	Объем бака
+Ethanol to add	Добавить этанола
+No fuel reading	Нет данных о топливе
+No ethanol reading	Нет данных об этаноле
+Target reached	Цель достигнута
+Purity below target	Чистота ниже цели
+Purity	Чистота
+Tank after	Бак после
+Exceeds tank capacity	Превышает объем бака
