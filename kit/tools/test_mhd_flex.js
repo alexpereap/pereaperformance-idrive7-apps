@@ -43,12 +43,15 @@ const MHD_MARKER = bytes('6F 04 4D 48 44 32 01 20 00 00 00 00 00 1C 06 00 00 42'
  * An in-memory DME at 0x12. kind: 'mhd' (the owner's ROM), 'stock' (no MHD), 'other' (MHD, another ROM),
  * 'quiet' (never answers). Options: lose = reads that answer 7F 22 31 before a good one; short = reply with
  * one data byte; values = [active, can]; slots = the dynamic identifiers the DME has (F300..F303 like the
- * owner's: any other answers 7F 2C 31, as F304 did on the car). Every reply is checked against the request's accept().
+ * owner's: any other answers 7F 2C 31, as F304 did on the car). Fuel: fuel = { L, R, total } counts for
+ * 22 5949 / 594A / 583B (L may be an array: one value per read), obd = the 01 2F byte (false: 7F 01 12),
+ * noHalves = 7F 22 31 to the halves, fuelQuiet = no answer to any fuel request. Every reply is checked
+ * against the request's accept().
  */
 function dme(kind, o) {
     o = o || {};
     const d = { calls: [], inflight: 0, maxInflight: 0, defined: null, lose: o.lose || 0, values: o.values || [85, 83],
-        slots: o.slots || ['F300', 'F301', 'F302', 'F303'] };
+        slots: o.slots || ['F300', 'F301', 'F302', 'F303'], fuel: Object.assign({ L: 49, R: 48, total: 48 }, o.fuel || {}), reads: 0 };
     const didOf = (data) => hex(data.slice(1, 3)).replace(' ', '');
     d.physical = async (target, sid, data, timeoutMs, accept) => {
         assert.strictEqual(target, 0x12);
@@ -74,6 +77,17 @@ function dme(kind, o) {
                     d.defined = did; return [0x6C, 0x02, data[1], data[2]];
                 }
             }
+            if ((sid === 0x22 && (data[0] === 0x59 || data[0] === 0x58)) || sid === 0x01) {
+                if (o.fuelQuiet) return null;
+                if (sid === 0x01) return data[0] === 0x2F && o.obd !== false ? [0x41, 0x2F, o.obd == null ? 104 : o.obd] : [0x7F, 0x01, 0x12];
+                const did = hex(data).replace(' ', '');
+                if (did === '583B') return [0x62, 0x58, 0x3B, d.fuel.total];
+                if (did !== '5949' && did !== '594A') return [0x7F, 0x22, 0x31];
+                if (o.noHalves) return [0x7F, 0x22, 0x31];
+                const want = did === '5949' ? d.fuel.L : d.fuel.R;
+                const v = Array.isArray(want) ? want[Math.min(want.length - 1, did === '5949' ? d.reads++ : 0)] : want;
+                return [0x62, data[0], data[1], v];
+            }
             if (sid === 0x22 && data[0] === 0xF3) {
                 const did = hex(data).replace(' ', '');
                 if (d.lose > 0) { d.lose--; d.defined = null; }
@@ -95,7 +109,7 @@ function poller(d, o) {
     const p = new Poller(Object.assign({
         physical: (sid, data, ms, accept) => d.physical(0x12, sid, data, ms, accept), available: () => true, hasLink: () => true, log: quiet,
         sleep: async () => { await new Promise(setImmediate); }, now: () => clock.t,
-    }, o || {}));
+    }, o || {}, { config: Object.assign({ fuelPollMs: 0 }, o && o.config) }));
     p.clock = clock;
     return p;
 }
@@ -321,6 +335,96 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
         assert.strictEqual(d.maxInflight, 1);
     }
 
+    /* ---------- pure protocol: the fuel identifiers ---------- */
+    assert.deepStrictEqual(P.FUEL, { dmeL: '5949', dmeR: '594A', dmeTotal: '583B' });
+    assert.strictEqual(hex(P.fuelDidRequest('5949').data), '59 49');
+    assert.ok(P.fuelDidRequest('5949').accept([0x62, 0x59, 0x49, 1]) && !P.fuelDidRequest('5949').accept([0x62, 0x59, 0x4A, 1]));
+    assert.deepStrictEqual(P.parseFuelDid([0x62, 0x59, 0x49, 49], '5949'), { ok: true, raw: 49, litres: 24.5 });
+    assert.deepStrictEqual(P.parseFuelDid([0x62, 0x58, 0x3B, 24], '583B'), { ok: true, raw: 24, litres: 24 });
+    assert.strictEqual(P.parseFuelDid([0x62, 0x59, 0x49, 0xFF], '5949').reason, 'no data');
+    assert.strictEqual(P.parseFuelDid([0x62, 0x59, 0x49, 1, 2], '5949').reason, 'length');
+    assert.deepStrictEqual(P.parseFuelDid([0x7F, 0x22, 0x31], '5949'), { ok: false, nrc: 0x31, reason: 'out of range' });
+    assert.strictEqual(P.parseFuelDid(null, '5949').reason, 'timeout');
+    assert.strictEqual(hex([P.obdRequest(0x2F).sid].concat(P.obdRequest(0x2F).data)), '01 2F');
+    assert.ok(P.obdRequest(0x2F).accept([0x41, 0x2F, 9]) && P.obdRequest(0x2F).accept([0x7F, 0x01, 0x12]) && !P.obdRequest(0x2F).accept([0x41, 0x0C, 9]));
+    assert.strictEqual(P.parseObd([0x41, 0x2F, 255], 0x2F).percent, 100);
+    assert.ok(Math.abs(P.parseObd([0x41, 0x2F, 104], 0x2F).percent - 40.784) < 0.001);
+    assert.deepStrictEqual(P.parseObd([0x7F, 0x01, 0x12], 0x2F), { ok: false, nrc: 0x12, reason: 'sub-function not supported' });
+
+    /* ---------- the fuel sources between the MHD steps ---------- */
+    {
+        const until = async (p, state, max) => { for (let i = 0; i < (max || 40) && p.state !== state; i++) await p.step(); return p.state; };
+        const fuelCalls = (d) => d.calls.filter((c) => /^22 59 49|^22 59 4A|^22 58 3B|^01 2F/.test(c));
+        // the owner's DME: the four sources answer in the first round, the MHD steps go on to reading, one request at a time
+        let d = dme('mhd');
+        let p = poller(d, { config: { fuelPollMs: 10000 } });
+        assert.strictEqual(await until(p, 'reading'), 'reading');
+        assert.deepStrictEqual(fuelCalls(d), ['22 59 49', '22 59 4A', '22 58 3B', '01 2F']);
+        let f = p.view().fuel;
+        assert.strictEqual(f.dme, 48.5);
+        assert.deepStrictEqual([f.dmeL.value, f.dmeR.value, f.dmeTotal.value, f.dmeL.fresh, f.obd.fresh], [24.5, 24, 48, true, true]);
+        assert.ok(Math.abs(f.obd.value - 40.784) < 0.001);
+        assert.strictEqual(d.maxInflight, 1);
+        // no second round before fuelPollMs; then one, while the ethanol reads go on
+        const n = fuelCalls(d).length, reads = d.calls.filter((c) => c === '22 F3 03').length;
+        await steps(p, 4);
+        assert.strictEqual(fuelCalls(d).length, n);
+        p.clock.t += 10000; await steps(p, 6);
+        assert.strictEqual(fuelCalls(d).length, n + 4);
+        assert.ok(d.calls.filter((c) => c === '22 F3 03').length > reads, 'the ethanol is still read');
+        assert.strictEqual(p.state, 'reading');
+        // stale after 60 s without a round (hidden, say), fresh again after one
+        p.setVisible(false); p.clock.t += 61000; await steps(p, 3);
+        assert.strictEqual(p.view().fuel.dme, null);
+        assert.strictEqual(p.view().fuel.dmeL.fresh, false);
+        p.setVisible(true); await steps(p, 5);
+        assert.strictEqual(p.view().fuel.dme, 48.5);
+        // demo (paused): nothing is asked
+        d = dme('mhd'); p = poller(d, { config: { fuelPollMs: 10000 } });
+        p.setPaused(true); await steps(p, 6);
+        assert.strictEqual(d.calls.length, 0);
+        // fuelPollMs 0: never asked
+        d = dme('mhd'); p = poller(d, { config: { fuelPollMs: 0 } });
+        await until(p, 'reading'); await steps(p, 4);
+        assert.strictEqual(fuelCalls(d).length, 0);
+        // a stock DME (no MHD) still has the fuel identifiers
+        d = dme('stock'); p = poller(d, { config: { fuelPollMs: 10000 } });
+        assert.strictEqual(await until(p, 'no-mhd'), 'no-mhd');
+        await steps(p, 4);
+        assert.strictEqual(p.view().fuel.dme, 48.5);
+        assert.strictEqual(p.view().fuel.dmeTotal.value, 48);
+        // a DME without the halves: those go off (refused), the total and OBD stay; asked again after 5 min
+        d = dme('mhd', { noHalves: true }); p = poller(d, { config: { fuelPollMs: 10000 } });
+        await until(p, 'reading'); await steps(p, 4);
+        f = p.view().fuel;
+        assert.deepStrictEqual([f.dme, f.dmeL.off, f.dmeR.off, f.dmeTotal.value, f.dmeTotal.off, f.obd.off], [null, true, true, 48, false, false]);
+        let k = fuelCalls(d).length;
+        p.clock.t += 10000; await steps(p, 4);
+        assert.strictEqual(fuelCalls(d).length, k + 2, 'only the total and OBD are asked while the halves are off');
+        p.clock.t += 300000; await steps(p, 6);
+        assert.ok(d.calls.slice(-6).indexOf('22 59 49') >= 0, 'the halves are tried again after the pause');
+        // no OBD: off after the refusal, the DME identifiers unaffected
+        d = dme('mhd', { obd: false }); p = poller(d, { config: { fuelPollMs: 10000 } });
+        await until(p, 'reading'); await steps(p, 4);
+        assert.deepStrictEqual([p.view().fuel.obd.off, p.view().fuel.obd.value, p.view().fuel.dme], [true, null, 48.5]);
+        // the median of the last 3 reads of a half hides one odd value
+        d = dme('mhd', { fuel: { L: [49, 60, 49, 49] } }); p = poller(d, { config: { fuelPollMs: 10000 } });
+        await until(p, 'reading'); await steps(p, 4);
+        assert.strictEqual(p.view().fuel.dmeL.value, 24.5);
+        p.clock.t += 10000; await steps(p, 6);
+        assert.strictEqual(p.view().fuel.dmeL.value, 27.25, 'two reads: the mean of both');
+        p.clock.t += 10000; await steps(p, 6);
+        assert.strictEqual(p.view().fuel.dmeL.value, 24.5, 'three reads: the median');
+        assert.strictEqual(p.view().fuel.dme, 48.5);
+        // a DME quiet on the fuel identifiers: off after 3 misses each, the MHD side unaffected
+        d = dme('mhd', { fuelQuiet: true }); p = poller(d, { config: { fuelPollMs: 10000 } });
+        await until(p, 'reading');
+        for (let i = 0; i < 3; i++) { p.clock.t += 10000; await steps(p, 6); }
+        f = p.view().fuel;
+        assert.deepStrictEqual([f.dmeL.off, f.dmeR.off, f.dmeTotal.off, f.obd.off, p.state], [true, true, true, true, 'reading']);
+        assert.strictEqual(f.dme, null);
+    }
+
     /* ---------- the blend calculator ---------- */
     {
         const b = (litres, can, target, purity, tank) => C.blend({ litres, can, target, purity, tank });
@@ -344,6 +448,17 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
         // more than the tank takes: 50 l of E10 to E85 needs 250 l of ethanol
         assert.deepStrictEqual(b(50, 10, 85, 100, 60), { status: 'ok', litres: 250, gallons: 66, totalLitres: 300, overflowLitres: 240 });
         assert.strictEqual(b(50, 10, 85, 100, null).overflowLitres, 0);     // no capacity known: no warning
+        // the source the dial uses: the finest there is, or the one the setting names
+        const all = { dme: 48.5, kombi: 48, obdPct: 40.784 };
+        assert.deepStrictEqual(C.pickFuel(all, 'auto', 60), { litres: 48.5, source: 'dme' });
+        assert.deepStrictEqual(C.pickFuel({ kombi: 48, obdPct: 40.784 }, 'auto', 60), { litres: 48, source: 'kombi' });
+        assert.deepStrictEqual(C.pickFuel({ obdPct: 40.784 }, 'auto', 60), { litres: 24.5, source: 'obd' });
+        assert.deepStrictEqual(C.pickFuel({ obdPct: 40.784 }, 'auto', null), { litres: null, source: null });
+        assert.deepStrictEqual(C.pickFuel(all, 'kombi', 60), { litres: 48, source: 'kombi' });
+        assert.deepStrictEqual(C.pickFuel(all, 'obd', 60), { litres: 24.5, source: 'obd' });
+        assert.deepStrictEqual(C.pickFuel({ kombi: 48 }, 'dme', 60), { litres: null, source: null });
+        assert.deepStrictEqual(C.pickFuel(null, 'auto', 60), { litres: null, source: null });
+        assert.deepStrictEqual(C.pickFuel(all, undefined, 60), { litres: 48.5, source: 'dme' });   // no setting yet: auto
     }
 
     /* ---------- the screen in every state, software and GPU ---------- */
@@ -372,6 +487,19 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
         const v = { state: 'reading', active: 12, can: 12, fuel: 6.5, target: 65, purity: 99, tankCap: 60, stale: false, demo: false };
         assert.strictEqual(UI.fuelLine(v), '(6.5 L)');
         assert.strictEqual(UI.fuelLine({ fuel: null }), '--');
+        assert.strictEqual(UI.fuelLine({ fuel: 24.5, fuelSource: 'dme' }), '(24.5 L \u00b7 DME)');
+        assert.strictEqual(UI.fuelLine({ fuel: 24, fuelSource: 'kombi' }), '(24.0 L \u00b7 Kombi)');
+        assert.strictEqual(UI.fuelLine({ fuel: 24.5, fuelSource: 'obd' }), '(24.5 L \u00b7 OBD)');
+        assert.strictEqual(UI.fuelLine({ fuel: 24.6, fuelSource: 'demo' }), '(24.6 L)');
+        const all = { kombi: 24, kombiL: 12, kombiR: 12, dme: 24.5, dmeL: 12, dmeR: 12.5, dmeTotal: 24, obdPct: 40.784 };
+        assert.strictEqual(UI.sourcesLine({ fuelAll: all, tankCap: 60 }), 'Kombi 24 L (L 12 R 12)   \u00b7   DME 12.0 + 12.5 = 24.5 L (583B 24 L)   \u00b7   OBD 40.8 % = 24.5 L');
+        assert.strictEqual(UI.sourcesLine({ fuelAll: {}, tankCap: 60 }), 'Kombi -- L (L -- R --)   \u00b7   DME -- + -- = -- L (583B -- L)   \u00b7   OBD -- % = -- L');
+        assert.strictEqual(UI.sourcesLine({}), UI.sourcesLine({ fuelAll: {}, tankCap: 60 }));
+        [[all, true], [{}, true], [all, false]].forEach(([fa, show]) => {
+            const r = new Recorder(UI.W, UI.H);
+            UI.draw(r, G, t, Object.assign({}, v, { fuelAll: fa, showSources: show, fuelSource: 'dme' }), LOGO);
+            play(r.words(), new Canvas(UI.W, UI.H));
+        });
         assert.deepStrictEqual(UI.inputs({}), { litres: null, can: null, target: 85, purity: 99, tank: 60 });   // a view without the settings
         let r = UI.result(v, t);
         assert.deepStrictEqual(r, { text: '2.7 gal (10.1 L)', colour: t.accent, literal: true, detail: { text: 'Purity 99 %   ·   Tank after 16.6 / 60 L', colour: t.dim } });
@@ -402,9 +530,9 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
     assert.ok(LOGO.w === 180 && LOGO.h > 40 && LOGO.runs.length > 100 && LOGO.palette.every((c) => /^#[0-9a-f]{8}$/.test(c)));
 
     /* ---------- main.js with the kit stubbed: no transport -> demo, one frame drawn ---------- */
-    require(path.join(app, 'main'));
+    const mainMod = require(path.join(app, 'main'));
     assert.ok(mguApp && typeof mguApp.start === 'function');
-    const vals = { theme: 'm_tricolour', layout: 'full', renderer: 'auto', demo: 'auto', target: 85, purity: 99, tank: 60 };
+    const vals = { theme: 'm_tricolour', layout: 'full', renderer: 'auto', demo: 'auto', target: 85, purity: 99, tank: 60, fuelSource: 'auto', fuelSources: false };
     let frames = 0, loopFn = null, last = null, watched = null, kicks = 0;
     const changes = [], sets = [];
     const ctx = {
@@ -448,6 +576,15 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
     watched.handlers.statusRangeTankStatus(null);
     await loopFn();
     assert.strictEqual(frames, 5);
+    // the sources line, with the cluster's halves as sent, in every fuel source mode and in demo
+    watched.handlers.statusRangeTankStatus({ fluidLevelFuelTank: 24, fluidLevelFuelTankLeftHand: 12, fluidLevelFuelTankRightHand: 12 });
+    vals.fuelSources = true;
+    for (const mode of ['auto', 'dme', 'kombi', 'obd']) { vals.fuelSource = mode; await loopFn(); }
+    vals.demo = 'on'; await loopFn();
+    assert.strictEqual(frames, 10);
+    assert.deepStrictEqual(mainMod.demoFuelAll(24.6, 60), { kombi: 25, kombiL: 12, kombiR: 13, dme: 24.5, dmeL: 12.3, dmeR: 12.3, dmeTotal: 25, obdPct: 41 });
+    assert.strictEqual(typeof mainMod.demoValues(0).fuel, 'number');
+    vals.fuelSources = false; vals.fuelSource = 'auto';
     vals.demo = 'auto';
     await new Promise((r) => setTimeout(r, 30));     // the poller's loop idles in no-link without throwing
     console.log('Flex Fuel checks passed (protocol, poller states, filters, calculator, screen, main).');

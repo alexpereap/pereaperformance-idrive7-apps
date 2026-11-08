@@ -152,8 +152,43 @@ function parseRead(reply, did) {
 
 function nrcText(nrc) { return NRC[nrc] || ('NRC ' + hex(nrc)); }
 
+/* ---------------- the fuel in the tank: standard identifiers, any DME (Live Data's DME8FF_R catalog) ---------------- */
+/** 5949 / 594A: the left and right tank halves, one byte each at 0.5 l; 583B: the whole tank, one byte in litres. */
+const FUEL = { dmeL: '5949', dmeR: '594A', dmeTotal: '583B' };
+const FUEL_K = { 5949: 0.5, '594A': 0.5, '583B': 1 };
+const OBD_FUEL_PID = 0x2F;                  // OBD mode 01 PID 2F: fuel tank level, one byte, 100/255 %
+
+/** 22 <did>: one fuel identifier. */
+function fuelDidRequest(did) { return readRequest(did); }
+
+/** The fuel identifier's answer: { ok, raw, litres }, { ok: false, nrc, reason }, or reason 'length' / 'no data' (FF). */
+function parseFuelDid(reply, did) {
+    if (!reply || !reply.length) return { ok: false, reason: 'timeout' };
+    if (reply[0] === 0x7F) return { ok: false, nrc: reply[2], reason: nrcText(reply[2]) };
+    const [hi, lo] = didBytes(did);
+    if (reply[0] !== 0x62 || reply[1] !== hi || reply[2] !== lo) return { ok: false, reason: 'unexpected ' + bytesHex(reply.slice(0, 4)) };
+    if (reply.length !== 4) return { ok: false, reason: 'length' };
+    if (reply[3] === 0xFF) return { ok: false, reason: 'no data' };
+    return { ok: true, raw: reply[3], litres: reply[3] * (FUEL_K[did] || 1) };
+}
+
+/** 01 <pid>: an OBD mode 01 value; the reply echoes the PID after 41, a refusal is 7F 01. */
+function obdRequest(pid) {
+    return { sid: 0x01, data: [pid], accept: (u) => (u[0] === 0x41 && u[1] === pid) || (u[0] === 0x7F && u[1] === 0x01) };
+}
+
+/** The OBD fuel level's answer: { ok, raw, percent } (100/255 % per count), or { ok: false, nrc?, reason }. */
+function parseObd(reply, pid) {
+    if (!reply || !reply.length) return { ok: false, reason: 'timeout' };
+    if (reply[0] === 0x7F) return { ok: false, nrc: reply[2], reason: nrcText(reply[2]) };
+    if (reply[0] !== 0x41 || reply[1] !== pid) return { ok: false, reason: 'unexpected ' + bytesHex(reply.slice(0, 4)) };
+    if (reply.length < 3) return { ok: false, reason: 'length' };
+    return { ok: true, raw: reply[2], percent: reply[2] * 100 / 255 };
+}
+
 module.exports = {
     DME, PROFILES, PROBE, hexBytes, addressBytes, didBytes, bytesHex,
     probeRequest, parseProbe, svkRequest, svkData, findHex, svkIds, matchProfile,
     acceptDefine, clearRequest, defineRequest, parseDefine, readRequest, parseRead, nrcText,
+    FUEL, FUEL_K, OBD_FUEL_PID, fuelDidRequest, parseFuelDid, obdRequest, parseObd,
 };

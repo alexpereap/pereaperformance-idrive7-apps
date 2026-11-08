@@ -167,5 +167,10 @@
   "Purity below target": "순도가 목표보다 낮음",
   "Purity": "순도",
   "Tank after": "주유 후 탱크",
-  "Exceeds tank capacity": "탱크 용량 초과"
+  "Exceeds tank capacity": "탱크 용량 초과",
+  "Fuel source": "연료 데이터 소스",
+  "DME tank halves": "DME 탱크 절반값",
+  "Cluster (Kombi)": "계기판 (Kombi)",
+  "OBD level": "OBD 연료 레벨",
+  "Show fuel sources": "연료 소스 표시"
 }

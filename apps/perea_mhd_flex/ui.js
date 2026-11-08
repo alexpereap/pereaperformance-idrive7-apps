@@ -11,8 +11,11 @@
  * fill-up, or a sensor the map does not follow) the header says MISMATCH.
  *
  * GPU-safe: arc / circle / line / text / roundRect / fillRect only (the car's Recorder has no polygons).
- * v = Poller.view() + { demo, fuel (litres), target, purity, tankCap (%, %, litres: the settings),
- * setTarget(delta) }; LOGO = logo.js (runs of a palette; `ink` entries take the theme's text colour).
+ * v = Poller.view() + { demo, fuel (litres, from the source picked), fuelSource ('dme' | 'kombi' | 'obd' |
+ * 'demo' | null), fuelAll (every source's reading, for the sources line), showSources (the setting),
+ * target, purity, tankCap (%, %, litres: the settings), setTarget(delta) }; LOGO = logo.js (runs of a
+ * palette; `ink` entries take the theme's text colour). With showSources a line along the bottom compares
+ * the cluster's litres (and its halves as sent), the DME's halves and total, and the OBD level.
  */
 const { withAlpha, rgba } = require('./kit/canvas');
 const C = require('./calc');
@@ -26,6 +29,8 @@ const COL_L = 70, VAL_X = 270, COL_R = 1070;              // left column (calcul
 const ROW_T = 330, ROW_R = 410, ROW_D = 446;              // target buttons' top; result and detail baselines
 const BTN_W = 76, BTN_H = 42, BTN_X = [372, 462];
 const SEP_X = 740;
+const SOURCES_Y = 484;          // baseline of the fuel sources line (showSources)
+const SOURCE_NAMES = { dme: 'DME', kombi: 'Kombi', obd: 'OBD' };
 const TARGET_STEP = 5;
 const DEFAULTS = { target: 85, purity: 99, tank: 60 };    // (the settings' defaults, for a view without them)
 
@@ -99,8 +104,24 @@ function inputs(v) {
     };
 }
 
-/** The litres under the fuel dial's gallons: '(24.6 L)', or '--' without a reading. */
-function fuelLine(v) { return isNum(v.fuel) ? '(' + v.fuel.toFixed(1) + ' L)' : '--'; }
+/** The litres under the fuel dial's gallons and where they come from: '(24.5 L · DME)', or '--' without a reading. */
+function fuelLine(v) {
+    if (!isNum(v.fuel)) return '--';
+    const src = SOURCE_NAMES[v.fuelSource];
+    return '(' + v.fuel.toFixed(1) + ' L' + (src ? ' \u00b7 ' + src : '') + ')';
+}
+
+/**
+ * Every fuel source side by side (the "Show fuel sources" setting), to see on the car which one has decimals:
+ * the cluster's litres with its two halves as sent, the DME's halves and their sum with its whole-tank
+ * identifier, and the OBD level with the litres it means over the tank capacity. '--' where nothing came.
+ */
+function sourcesLine(v) {
+    const a = v.fuelAll || {}, tank = isNum(v.tankCap) ? v.tankCap : DEFAULTS.tank;
+    const n = (x, d) => (isNum(x) ? x.toFixed(d) : '--');
+    const obdL = isNum(a.obdPct) ? a.obdPct / 100 * tank : null;
+    return 'Kombi ' + n(a.kombi, 0) + ' L (L ' + n(a.kombiL, 0) + ' R ' + n(a.kombiR, 0) + ')   \u00b7   DME ' + n(a.dmeL, 1) + ' + ' + n(a.dmeR, 1) + ' = ' + n(a.dme, 1) + ' L (583B ' + n(a.dmeTotal, 0) + ' L)   \u00b7   OBD ' + n(a.obdPct, 1) + ' % = ' + n(obdL, 1) + ' L';
+}
 
 /**
  * The result row and its detail line: { text, colour, literal, detail: { text, colour } }. The number
@@ -165,6 +186,8 @@ function draw(cv, G, t, v, LOGO) {
     const d = detail(v, t);
     if (d.text) cv.text(d.text, COL_R, ROW_D, 16, d.colour, { align: 'center', font: 'label', literal: d.literal });
 
+    if (v.showSources) cv.text(sourcesLine(v), COL_L, SOURCES_Y, 18, t.dim, { font: 'label', literal: true });
+
     if (LOGO && LOGO.runs && LOGO.runs.length) {
         const y = G.pageBottom(cv) - G.MARGIN - LOGO.h;
         cv.blit(logoLayer(G, t, LOGO, cv.textScale), W - 24 - G.MARGIN - LOGO.w, y);
@@ -172,4 +195,4 @@ function draw(cv, G, t, v, LOGO) {
     G.frame(cv, t, ['Flex Fuel'], 0, [v.demo ? { text: 'DEMO' } : null, badge(v, t)]);
 }
 
-module.exports = { draw, note, badge, detail, mismatch, sensorOnly, inputs, fuelLine, result, W, H, GO, GAP, TARGET_STEP, DEFAULTS };
+module.exports = { draw, note, badge, detail, mismatch, sensorOnly, inputs, fuelLine, sourcesLine, result, W, H, GO, GAP, TARGET_STEP, DEFAULTS, SOURCE_NAMES };

@@ -17,9 +17,13 @@
  * disabled" in amber when Active is 0 while CAN reads ethanol, and a MISMATCH badge when the two are
  * 10 points or more apart.
  *
- * Fuel level: SOME/IP de.bmw.infotainment.KombiIF statusRangeTankStatus.fluidLevelFuelTank, litres as
- * the cluster sends them (255 and up: no data), read again every 10 s since a car may not notify it;
- * a reading older than 60 s counts as gone. The raw value is logged once a minute to check its scale.
+ * Fuel level, from several sources at once so the finest one that answers on a car can be used (the
+ * setting "Fuel source": Auto takes the first there is, DME, cluster, OBD; or one of them): the DME's two
+ * tank halves (22 5949 / 22 594A, 0.5 l each, read by the poller between its MHD steps), the cluster's
+ * SOME/IP de.bmw.infotainment.KombiIF statusRangeTankStatus.fluidLevelFuelTank (whole litres; 255 and up:
+ * no data; read again every 10 s since a car may not notify it) and the OBD fuel level (01 2F, % of the
+ * tank capacity set). A reading older than 60 s counts as gone. "Show fuel sources" draws them all on
+ * the screen, and the raw values go to the log once a minute, to see which has decimals on your car.
  */
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
@@ -29,7 +33,7 @@ const UI = require('./ui');
 const { Poller } = require('./poller');
 const { DME, PROFILES } = require('./protocol');
 const LOGO = require('./logo');
-const { round1 } = require('./calc');
+const { round1, pickFuel } = require('./calc');
 
 const KOMBI = 'de.bmw.infotainment.KombiIF';
 const TANK_POLL_MS = 10000, TANK_STALE_MS = 60000, TANK_LOG_MS = 60000, TANK_NO_DATA = 255;
@@ -51,6 +55,12 @@ function demoValues(t) {
     return { active: phase < 6000 ? 0 : base, can: Math.max(0, Math.min(100, Math.round(can))), fuel: round1(24.6 + 8 * Math.sin(t / 60000)) };
 }
 
+/** Demo readings of every fuel source, consistent with `fuel` litres in a tank of `tank` litres (the sources line). */
+function demoFuelAll(fuel, tank) {
+    const half = Math.round(fuel) / 2, dme = Math.round(fuel * 2) / 2;
+    return { kombi: Math.round(fuel), kombiL: Math.floor(half), kombiR: Math.ceil(half), dme, dmeL: round1(dme / 2), dmeR: round1(dme - dme / 2), dmeTotal: Math.round(fuel), obdPct: round1(fuel / tank * 100) };
+}
+
 mgu.run({
     async start(ctx) {
         const { ui, settings, log } = ctx;
@@ -66,18 +76,34 @@ mgu.run({
         // demo: Always, or Auto without a diagnostic transport (the emulator, a preview); never while the car answers
         const demo = () => settings.get('demo') === 'on' || (settings.get('demo') === 'auto' && !diag.p);
 
-        // the fuel in the tank, from the cluster's signal (litres; null until it comes, or when it is gone)
-        const tank = { litres: null, at: 0, logged: 0 };
-        const fuel = () => (tank.litres != null && Date.now() - tank.at < TANK_STALE_MS ? tank.litres : null);
+        // the fuel in the tank from the cluster's signal (litres; null until it comes, or when it is gone), with
+        // its two tank halves as sent (scale unknown: shown raw on the sources line)
+        const tank = { litres: null, left: null, right: null, at: 0, logged: 0 };
+        const kombiFresh = () => Date.now() - tank.at < TANK_STALE_MS;
+        /** every fuel source as the screen compares them: null where there is no fresh reading */
+        const fuelAll = (src) => ({
+            kombi: tank.litres != null && kombiFresh() ? tank.litres : null,
+            kombiL: tank.left != null && kombiFresh() ? tank.left : null,
+            kombiR: tank.right != null && kombiFresh() ? tank.right : null,
+            dme: src.dme, dmeL: src.dmeL.fresh ? src.dmeL.value : null, dmeR: src.dmeR.fresh ? src.dmeR.value : null,
+            dmeTotal: src.dmeTotal.fresh ? src.dmeTotal.value : null, obdPct: src.obd.fresh ? src.obd.value : null,
+        });
         const setting = (key) => num(settings.get(key), DEFAULTS[key]);
         /** -5 / +5 on the page: the target setting, kept to 10..100 (the setting's own steps) */
         const setTarget = (d) => settings.set('target', Math.max(TARGET_MIN, Math.min(TARGET_MAX, setting('target') + d)));
 
         const render = async () => {
             const v = poller.view();
-            if (demo()) Object.assign(v, demoValues(Date.now()), { state: 'reading', demo: true, stale: false });
-            else v.fuel = fuel();
             v.target = setting('target'); v.purity = setting('purity'); v.tankCap = setting('tank');
+            const all = fuelAll(v.fuel);
+            if (demo()) {
+                Object.assign(v, demoValues(Date.now()), { state: 'reading', demo: true, stale: false });
+                v.fuelSource = 'demo'; v.fuelAll = demoFuelAll(v.fuel, v.tankCap);
+            } else {
+                const pick = pickFuel(all, settings.get('fuelSource'), v.tankCap);
+                v.fuel = pick.litres; v.fuelSource = pick.source; v.fuelAll = all;
+            }
+            v.showSources = !!settings.get('fuelSources');
             v.setTarget = setTarget;
             const cv = ctx.canvas(UI.W, UI.H) || new Recorder(UI.W, UI.H);   // (the kit records every frame; software plays it back)
             UI.draw(cv, G, ctx.theme(), v, LOGO);
@@ -96,12 +122,16 @@ mgu.run({
         if (ctx.signals && typeof ctx.signals.watch === 'function') {
             ctx.signals.watch(KOMBI, '1', {
                 statusRangeTankStatus: (s) => {
-                    const raw = s ? s.fluidLevelFuelTank : undefined, n = num(raw, NaN);
-                    tank.litres = isFinite(n) && n >= 0 && n < TANK_NO_DATA ? n : null;
+                    const litres = (x) => { const n = num(x, NaN); return isFinite(n) && n >= 0 && n < TANK_NO_DATA ? n : null; };
+                    const raw = s ? s.fluidLevelFuelTank : undefined;
+                    tank.litres = litres(raw);
+                    tank.left = litres(s ? s.fluidLevelFuelTankLeftHand : undefined);
+                    tank.right = litres(s ? s.fluidLevelFuelTankRightHand : undefined);
                     tank.at = Date.now();
                     if (Date.now() - tank.logged > TANK_LOG_MS) {
                         tank.logged = Date.now();
-                        log.info('perea_mhd_flex: fluidLevelFuelTank raw=' + JSON.stringify(raw) + (tank.litres == null ? ' (no data)' : ' -> ' + tank.litres + ' L'));
+                        log.info('perea_mhd_flex: fluidLevelFuelTank raw=' + JSON.stringify(raw) + (tank.litres == null ? ' (no data)' : ' -> ' + tank.litres + ' L')
+                            + ' halves L=' + JSON.stringify(s ? s.fluidLevelFuelTankLeftHand : undefined) + ' R=' + JSON.stringify(s ? s.fluidLevelFuelTankRightHand : undefined));
                     }
                     loop.kick();
                 },
@@ -111,8 +141,8 @@ mgu.run({
         }
 
         await render();
-        log.info('perea_mhd_flex ready (transport=' + (diag.p ? 'up' : 'none') + ', demo=' + demo() + ', target=' + setting('target') + ' %, purity=' + setting('purity') + ' %, tank=' + setting('tank') + ' L)');
+        log.info('perea_mhd_flex ready (transport=' + (diag.p ? 'up' : 'none') + ', demo=' + demo() + ', target=' + setting('target') + ' %, purity=' + setting('purity') + ' %, tank=' + setting('tank') + ' L, fuel source=' + settings.get('fuelSource') + ')');
     },
 });
 
-module.exports = { demoValues, TARGET_STEP };
+module.exports = { demoValues, demoFuelAll, TARGET_STEP };
