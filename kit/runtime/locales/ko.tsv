@@ -175,3 +175,7 @@ Fuel source	연료 데이터 소스
 DME tank halves	DME 탱크 절반값
 Cluster (Kombi)	계기판 (Kombi)
 Show fuel sources	연료 소스 표시
+Active ethanol source	적용 에탄올 소스
+MHD address	MHD 주소
+DME alcohol (550D)	DME 알코올 (550D)
+Ethanol Content (DME)	에탄올 함량 (DME)

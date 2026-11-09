@@ -153,14 +153,18 @@ function parseRead(reply, did) {
 function nrcText(nrc) { return NRC[nrc] || ('NRC ' + hex(nrc)); }
 
 /* ---------------- the fuel in the tank: standard identifiers, any DME (Live Data's DME8FF_R catalog) ---------------- */
-/** 5949 / 594A: the left and right tank halves, one byte each at 0.5 l; 583B: the whole tank, one byte in litres. */
-const FUEL = { dmeL: '5949', dmeR: '594A', dmeTotal: '583B' };
-const FUEL_K = { 5949: 0.5, '594A': 0.5, '583B': 1 };
+/**
+ * 5949 / 594A: the left and right tank halves, one byte each at 0.5 l; 583B: the whole tank, one byte in litres;
+ * 550D: PROZENT_ALK_KRST, the alcohol percentage the DME itself believes the fuel has, one byte at 100/255 %
+ * (whether MHD's flex fuel keeps it in step with its own "Active" is what the app lets you check).
+ */
+const FUEL = { dmeL: '5949', dmeR: '594A', dmeTotal: '583B', dmeEthanol: '550D' };
+const FUEL_K = { 5949: 0.5, '594A': 0.5, '583B': 1, '550D': 100 / 255 };
 
 /** 22 <did>: one fuel identifier. */
 function fuelDidRequest(did) { return readRequest(did); }
 
-/** The fuel identifier's answer: { ok, raw, litres }, { ok: false, nrc, reason }, or reason 'length' / 'no data' (FF). */
+/** A one-byte identifier's answer: { ok, raw, value (litres, or % for 550D; `litres` is the same) }, { ok: false, nrc, reason }, or reason 'length' / 'no data' (FF). */
 function parseFuelDid(reply, did) {
     if (!reply || !reply.length) return { ok: false, reason: 'timeout' };
     if (reply[0] === 0x7F) return { ok: false, nrc: reply[2], reason: nrcText(reply[2]) };
@@ -168,7 +172,8 @@ function parseFuelDid(reply, did) {
     if (reply[0] !== 0x62 || reply[1] !== hi || reply[2] !== lo) return { ok: false, reason: 'unexpected ' + bytesHex(reply.slice(0, 4)) };
     if (reply.length !== 4) return { ok: false, reason: 'length' };
     if (reply[3] === 0xFF) return { ok: false, reason: 'no data' };
-    return { ok: true, raw: reply[3], litres: reply[3] * (FUEL_K[did] || 1) };
+    const value = reply[3] * (FUEL_K[did] || 1);
+    return { ok: true, raw: reply[3], value, litres: value };
 }
 
 

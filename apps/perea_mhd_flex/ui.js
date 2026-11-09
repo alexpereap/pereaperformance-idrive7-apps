@@ -15,7 +15,8 @@
  * 'demo' | null), fuelAll (every source's reading, for the sources line), showSources (the setting),
  * target, purity, tankCap (%, %, litres: the settings), setTarget(delta) }; LOGO = logo.js (runs of a
  * palette; `ink` entries take the theme's text colour). With showSources a line along the bottom compares
- * the cluster's litres (and its halves as sent) with the DME's halves and total.
+ * the cluster's litres (and its halves as sent) with the DME's halves and total, and the DME's own alcohol
+ * percentage (22 550D); activeSource 'dme' means the Active dial shows that percentage (label "(DME)").
  */
 const { withAlpha, rgba } = require('./kit/canvas');
 const C = require('./calc');
@@ -84,7 +85,11 @@ function badge(v, t) {
  */
 function detail(v, t) {
     const lit = (text) => ({ text, colour: t.dim, literal: true });
-    if (v.state === 'unsupported-rom') return lit(v.seen && v.seen.length ? v.seen.join('  ') : '');
+    if (v.state === 'unsupported-rom') {
+        // the ids seen, and the DME's own alcohol percentage when it answers: what there is to go on without a profile
+        const eth = v.fuelAll && isNum(v.fuelAll.dmeEthanol) ? '   \u00b7   DME alcohol ' + v.fuelAll.dmeEthanol.toFixed(1) + ' %' : '';
+        return lit((v.seen && v.seen.length ? v.seen.join('  ') : '') + eth);
+    }
     if (v.state === 'error') return lit([v.reason, v.lastReply].filter(Boolean).join('  ·  '));
     if (v.state !== 'reading') return lit('');
     if ((v.active == null || v.can == null) && !v.demo) return lit(v.lastReply || '');
@@ -119,7 +124,7 @@ function fuelLine(v) {
 function sourcesLine(v) {
     const a = v.fuelAll || {};
     const n = (x, d) => (isNum(x) ? x.toFixed(d) : '--');
-    return 'Kombi ' + n(a.kombi, 0) + ' L (L ' + n(a.kombiL, 0) + ' R ' + n(a.kombiR, 0) + ')   \u00b7   DME ' + n(a.dmeL, 1) + ' + ' + n(a.dmeR, 1) + ' = ' + n(a.dme, 1) + ' L (583B ' + n(a.dmeTotal, 0) + ' L)';
+    return 'Kombi ' + n(a.kombi, 0) + ' L (L ' + n(a.kombiL, 0) + ' R ' + n(a.kombiR, 0) + ')   \u00b7   DME ' + n(a.dmeL, 1) + ' + ' + n(a.dmeR, 1) + ' = ' + n(a.dme, 1) + ' L (583B ' + n(a.dmeTotal, 0) + ' L)   \u00b7   DME alcohol ' + n(a.dmeEthanol, 1) + ' %';
 }
 
 /**
@@ -161,7 +166,7 @@ function draw(cv, G, t, v, LOGO) {
         cv.text(label.toUpperCase(), cx, DIAL_Y + DIAL_R * 0.82, 26, t.text, { align: 'center', font: 'bold', spacing: 1.5 });
     };
     const i = inputs(v);
-    dial(DIAL_X[0], 'Ethanol Content (Active)', 'accent', { value: v.active });
+    dial(DIAL_X[0], v.activeSource === 'dme' ? 'Ethanol Content (DME)' : 'Ethanol Content (Active)', 'accent', { value: v.active });
     dial(DIAL_X[1], 'Ethanol Content (CAN)', 'accent2', { value: v.can });
     // the tank in US gallons over the capacity set (the scale changes with the setting: ticks without numbers)
     dial(DIAL_X[2], 'Fuel in tank', 'accent', { value: i.litres == null ? null : C.toGallons(i.litres), max: Math.max(1, i.tank) / C.GAL, unit: 'gal', decimals: 1, tickLabels: false });

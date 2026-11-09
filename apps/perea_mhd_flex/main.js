@@ -23,6 +23,10 @@
  * de.bmw.infotainment.KombiIF statusRangeTankStatus.fluidLevelFuelTank (whole litres; 255 and up: no data;
  * read again every 10 s since a car may not notify it). A reading older than 60 s counts as gone. "Show fuel
  * sources" draws them all on the screen, and the raw values go to the log once a minute.
+ *
+ * The same round reads 22 550D, the alcohol percentage the DME itself believes the fuel has (any ROM). The
+ * setting "Active ethanol source" puts it on the Active dial instead of MHD's RAM byte, to compare the two with
+ * MHD's own app; if they agree it is a way to read Active on a ROM without a profile.
  */
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
@@ -54,10 +58,10 @@ function demoValues(t) {
     return { active: phase < 6000 ? 0 : base, can: Math.max(0, Math.min(100, Math.round(can))), fuel: round1(24.6 + 8 * Math.sin(t / 60000)) };
 }
 
-/** Demo readings of every fuel source, consistent with `fuel` litres (the sources line). */
-function demoFuelAll(fuel) {
+/** Demo readings of every fuel source, consistent with `fuel` litres and `can` % (the sources line). */
+function demoFuelAll(fuel, can) {
     const half = Math.round(fuel) / 2, dme = Math.round(fuel * 2) / 2;
-    return { kombi: Math.round(fuel), kombiL: Math.floor(half), kombiR: Math.ceil(half), dme, dmeL: round1(dme / 2), dmeR: round1(dme - dme / 2), dmeTotal: Math.round(fuel) };
+    return { kombi: Math.round(fuel), kombiL: Math.floor(half), kombiR: Math.ceil(half), dme, dmeL: round1(dme / 2), dmeR: round1(dme - dme / 2), dmeTotal: Math.round(fuel), dmeEthanol: can == null ? null : Math.max(0, can - 1) };
 }
 
 mgu.run({
@@ -86,6 +90,7 @@ mgu.run({
             kombiR: tank.right != null && kombiFresh() ? tank.right : null,
             dme: src.dme, dmeL: src.dmeL.fresh ? src.dmeL.value : null, dmeR: src.dmeR.fresh ? src.dmeR.value : null,
             dmeTotal: src.dmeTotal.fresh ? src.dmeTotal.value : null,
+            dmeEthanol: src.dmeEthanol.fresh ? src.dmeEthanol.value : null,
         });
         const setting = (key) => num(settings.get(key), DEFAULTS[key]);
         /** -5 / +5 on the page: the target setting, kept to 10..100 (the setting's own steps) */
@@ -97,10 +102,13 @@ mgu.run({
             const all = fuelAll(v.fuel);
             if (demo()) {
                 Object.assign(v, demoValues(Date.now()), { state: 'reading', demo: true, stale: false });
-                v.fuelSource = 'demo'; v.fuelAll = demoFuelAll(v.fuel);
+                v.fuelSource = 'demo'; v.fuelAll = demoFuelAll(v.fuel, v.can); v.activeSource = 'mhd';
             } else {
                 const pick = pickFuel(all, settings.get('fuelSource'));
                 v.fuel = pick.litres; v.fuelSource = pick.source; v.fuelAll = all;
+                // the Active dial from the DME's own alcohol percentage instead of MHD's byte (any ROM)
+                v.activeSource = settings.get('ethanolSource') === 'dme' ? 'dme' : 'mhd';
+                if (v.activeSource === 'dme') v.active = all.dmeEthanol == null ? null : Math.round(all.dmeEthanol);
             }
             v.showSources = !!settings.get('fuelSources');
             v.setTarget = setTarget;
@@ -140,7 +148,7 @@ mgu.run({
         }
 
         await render();
-        log.info('perea_mhd_flex ready (transport=' + (diag.p ? 'up' : 'none') + ', demo=' + demo() + ', target=' + setting('target') + ' %, purity=' + setting('purity') + ' %, tank=' + setting('tank') + ' L, fuel source=' + settings.get('fuelSource') + ')');
+        log.info('perea_mhd_flex ready (transport=' + (diag.p ? 'up' : 'none') + ', demo=' + demo() + ', target=' + setting('target') + ' %, purity=' + setting('purity') + ' %, tank=' + setting('tank') + ' L, fuel source=' + settings.get('fuelSource') + ', active source=' + settings.get('ethanolSource') + ')');
     },
 });
 

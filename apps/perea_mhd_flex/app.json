@@ -1,8 +1,8 @@
 {
   "id": "perea_mhd_flex",
   "title": "Flex Fuel",
-  "description": "Ethanol content (Active and CAN) read from an MHD-flashed DME over the car's own diagnostic link, the fuel in the tank (the DME's tank halves or the cluster), and how much ethanol to add to reach a target blend. Read-only; the addresses come from a ROM profile table",
-  "version": "1.2.1",
+  "description": "Ethanol content (Active and CAN) read from an MHD-flashed DME over the car's own diagnostic link, the fuel in the tank (the DME's tank halves or the cluster), and how much ethanol to add to reach a target blend; the Active dial can also show the DME's own alcohol percentage (22 550D). Read-only; the addresses come from a ROM profile table",
+  "version": "1.3.0",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "E85",
@@ -58,7 +58,9 @@
      "steps": [40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]},
     {"key": "fuelSource", "label": "Fuel source", "type": "choice", "default": "auto", "aliases": {"obd": "auto"},
      "options": [["auto", "Auto"], ["dme", "DME tank halves"], ["kombi", "Cluster (Kombi)"]]},
-    {"key": "fuelSources", "label": "Show fuel sources", "type": "bool", "default": false}
+    {"key": "fuelSources", "label": "Show fuel sources", "type": "bool", "default": false},
+    {"key": "ethanolSource", "label": "Active ethanol source", "type": "choice", "default": "mhd",
+     "options": [["mhd", "MHD address"], ["dme", "DME alcohol (550D)"]]}
   ],
   "config": {
     "dynamicDids": ["F303", "F301"],
