@@ -36,6 +36,8 @@ const quiet = { info() {}, warn() {}, error(e) { throw new Error('log.error: ' +
 // the SVK replies as the user's DME gave them (ids at unaligned offsets on purpose in the second one)
 const SVK_OWN_F101 = bytes('62 F1 01 01 01 00 06 26 11 04 8F 04 D2 01 00 00 00 10 00 00 01 00 00 3D DE 03 13 16 02 00 00 3D D1 FF FF FF 06 00 00 48 DB 01 23 05 08 00 00 5D 55 50 3C 05 0D 00 00 84 17 50 3C 1D 05 00 00 27 42 02 05 41');
 const SVK_OWN_F102 = bytes('62 F1 02 01 01 00 05 22 02 18 8B 00 08 00 30 30 30 30 00 00 01 00 00 3D DE 03 1D 04 02 00 00 6E 45 FF FF FF 08 00 00 5D 55 50 3C 05 08 00 00 99 F6 14 46 06');
+// the other car: the same program family (5D55) in another software version (50480C / 50486D)
+const SVK_FAMILY_F101 = bytes(hex(bytes('62 F1 01 01 01 00 06 26 11 04 8F 04 D2 01 00 00 00 10 00 00 01 00 00 3D DE 03 13 16 02 00 00 3D D1 FF FF FF 06 00 00 48 DB 01 23 05 08 00 00 5D 55 50 3C 05 0D 00 00 84 17 50 3C 1D 05 00 00 27 42 02 05 41')).replace('5D 55 50 3C 05', '5D 55 50 48 0C').replace('84 17 50 3C 1D', '84 17 50 48 6D'));
 const SVK_OTHER_F101 = bytes('62 F1 01 01 01 00 06 26 10 16 8F 04 D2 01 00 00 00 10 00 00 06 00 00 48 DB 01 23 05 08 00 00 5C 64 14 6E 06 0D 00 00 8A 51 14 6E AD');
 const MHD_MARKER = bytes('6F 04 4D 48 44 32 01 20 00 00 00 00 00 1C 06 00 00 42');
 
@@ -64,11 +66,11 @@ function dme(kind, o) {
             if (kind === 'quiet') return null;
             if (sid === 0x2F) return kind === 'stock' ? [0x7F, 0x2F, 0x11] : MHD_MARKER.slice();
             if (sid === 0x22 && data[0] === 0xF1) {
-                if (data[1] === 0x01) return kind === 'other' ? SVK_OTHER_F101.slice() : SVK_OWN_F101.slice();
-                if (data[1] === 0x02) return kind === 'other' ? [0x7F, 0x22, 0x31] : SVK_OWN_F102.slice();
+                if (data[1] === 0x01) return kind === 'other' ? SVK_OTHER_F101.slice() : kind === 'family' ? SVK_FAMILY_F101.slice() : SVK_OWN_F101.slice();
+                if (data[1] === 0x02) return kind === 'other' || kind === 'family' ? [0x7F, 0x22, 0x31] : SVK_OWN_F102.slice();
             }
             if (sid === 0x2C) {
-                assert.strictEqual(kind, 'mhd', 'only the known ROM may be defined');
+                assert.ok(kind === 'mhd' || kind === 'family', 'only the known program family may be defined');
                 const did = didOf(data);
                 if (d.slots.indexOf(did) < 0) return [0x7F, 0x2C, 0x31];
                 if (data[0] === 0x03) { const was = d.defined === did; if (was) d.defined = null; return was ? [0x6C, 0x03, data[1], data[2]] : [0x7F, 0x2C, 0x31]; }
@@ -136,7 +138,15 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
     const other = P.matchProfile([SVK_OTHER_F101.slice(3), null]);
     assert.strictEqual(other.profile, null);
     assert.deepStrictEqual(other.seen, ['00005C64146E06', '00008A51146EAD']);
-    assert.strictEqual(P.matchProfile([SVK_OWN_F101.slice(3)], [{ prgid: '00005D55503C05', calid: '0000000000000A', active: 'B00060C2', can: 'B00060D2' }]).profile, null, 'both ids must match');
+    // the match is by program family: the two id bytes of the type-08 entry, whatever the software version
+    assert.deepStrictEqual(own.families, ['5D55', '99F6'], 'every program entry counts (F1 02 lists a second one)');
+    assert.deepStrictEqual(P.svkEntries(SVK_OWN_F101.slice(3)), [{ type: 0x08, id: '00005D55503C05', family: '5D55' }, { type: 0x0D, id: '00008417503C1D', family: '8417' }]);
+    const fam = P.matchProfile([SVK_FAMILY_F101.slice(3), null]);
+    assert.strictEqual(fam.profile.active, 'B00060C2', 'another version of the 5D55 program takes the same addresses');
+    assert.deepStrictEqual(fam.seen, ['00005D5550480C', '0000841750486D']);
+    assert.strictEqual(P.matchProfile([SVK_OWN_F101.slice(3)], [{ family: '5D56', active: 'B00060C2', can: 'B00060D2' }]).profile, null, 'another family');
+    assert.strictEqual(P.matchProfile([SVK_OWN_F101.slice(3)], [{ family: '8417', active: 'B00060C2', can: 'B00060D2' }]).profile, null, 'a calibration id is not a program family');
+    assert.strictEqual(P.matchProfile([SVK_OWN_F101.slice(3)], [{ prgid: '00005D55503C05', calid: '00008417503C1D', active: 'B00060C2', can: 'B00060D2' }]).profile, null, 'a profile without a family matches nothing');
 
     assert.strictEqual(hex(P.clearRequest('F304').data), '03 F3 04');
     assert.strictEqual(hex(P.defineRequest('F304', P.PROFILES[0]).data), '02 F3 04 14 B0 00 60 C2 01 B0 00 60 D2 01');
@@ -417,6 +427,11 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
         for (let i = 0; i < 3; i++) { p.clock.t += 10000; await steps(p, 6); }
         f = p.view().fuel;
         assert.deepStrictEqual([f.dmeL.off, f.dmeR.off, f.dmeTotal.off, f.dmeEthanol.off, p.state], [true, true, true, true, 'reading']);
+        // MHD on another version of the known program family: the same addresses, straight to reading
+        d = dme('family'); p = poller(d, { config: { fuelPollMs: 10000 } });
+        assert.strictEqual(await until(p, 'reading'), 'reading');
+        await steps(p, 3);                                   // the first read of the identifier
+        assert.deepStrictEqual([p.view().active, p.view().can, p.view().profile, p.view().seen], [85, 83, P.PROFILES[0].name, ['00005D5550480C', '0000841750486D']]);
         // MHD on another ROM: no ethanol identifier, but the DME's own alcohol percentage is read all the same
         d = dme('other'); p = poller(d, { config: { fuelPollMs: 10000 } });
         assert.strictEqual(await until(p, 'unsupported-rom'), 'unsupported-rom');
@@ -543,7 +558,7 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
     /* ---------- main.js with the kit stubbed: no transport -> demo, one frame drawn ---------- */
     const mainMod = require(path.join(app, 'main'));
     assert.ok(mguApp && typeof mguApp.start === 'function');
-    const vals = { theme: 'm_tricolour', layout: 'full', renderer: 'auto', demo: 'auto', target: 85, purity: 99, tank: 60, fuelSource: 'auto', fuelSources: false, ethanolSource: 'mhd' };
+    const vals = { theme: 'm_tricolour', layout: 'full', renderer: 'auto', demo: 'auto', target: 85, purity: 99, tank: 60, fuelSource: 'auto', fuelSources: false, ethanolSource: 'auto' };
     let frames = 0, loopFn = null, last = null, watched = null, kicks = 0;
     const changes = [], sets = [];
     const ctx = {
@@ -592,11 +607,12 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
     vals.fuelSources = true;
     for (const mode of ['auto', 'dme', 'kombi']) { vals.fuelSource = mode; await loopFn(); }
     vals.ethanolSource = 'dme'; await loopFn();          // the Active dial from 550D (nothing read here: '--')
+    vals.ethanolSource = 'mhd'; await loopFn();
     vals.demo = 'on'; await loopFn();
-    assert.strictEqual(frames, 10);
+    assert.strictEqual(frames, 11);
     assert.deepStrictEqual(mainMod.demoFuelAll(24.6, 70), { kombi: 25, kombiL: 12, kombiR: 13, dme: 24.5, dmeL: 12.3, dmeR: 12.3, dmeTotal: 25, dmeEthanol: 69 });
     assert.strictEqual(mainMod.demoFuelAll(24.6, null).dmeEthanol, null);
-    vals.ethanolSource = 'mhd';
+    vals.ethanolSource = 'auto';
     assert.strictEqual(typeof mainMod.demoValues(0).fuel, 'number');
     vals.fuelSources = false; vals.fuelSource = 'auto';
     vals.demo = 'auto';

@@ -152,7 +152,7 @@
   "Cluster (Kombi)": "仪表盘 (Kombi)",
   "Show fuel sources": "显示燃油来源",
   "Active ethanol source": "生效乙醇来源",
-  "MHD address": "MHD 地址",
   "DME alcohol (550D)": "DME 酒精含量 (550D)",
-  "Ethanol Content (DME)": "乙醇含量（DME）"
+  "Ethanol Content (DME)": "乙醇含量（DME）",
+  "MHD address (5D55)": "MHD 地址 (5D55)"
 }

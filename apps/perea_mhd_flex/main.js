@@ -25,8 +25,9 @@
  * sources" draws them all on the screen, and the raw values go to the log once a minute.
  *
  * The same round reads 22 550D, the alcohol percentage the DME itself believes the fuel has (any ROM). The
- * setting "Active ethanol source" puts it on the Active dial instead of MHD's RAM byte, to compare the two with
- * MHD's own app; if they agree it is a way to read Active on a ROM without a profile.
+ * setting "Active ethanol source": Auto shows MHD's byte on the Active dial while the DME's program family has a
+ * profile (protocol.js), and the DME's percentage when it has none (or no MHD); "MHD address (5D55)" and "DME
+ * alcohol (550D)" force one or the other, to compare them with MHD's own app.
  */
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
@@ -106,8 +107,9 @@ mgu.run({
             } else {
                 const pick = pickFuel(all, settings.get('fuelSource'));
                 v.fuel = pick.litres; v.fuelSource = pick.source; v.fuelAll = all;
-                // the Active dial from the DME's own alcohol percentage instead of MHD's byte (any ROM)
-                v.activeSource = settings.get('ethanolSource') === 'dme' ? 'dme' : 'mhd';
+                // the Active dial: MHD's byte, or the DME's own alcohol percentage (Auto: the latter without a profile / MHD)
+                const src = settings.get('ethanolSource'), noProfile = v.state === 'unsupported-rom' || v.state === 'no-mhd';
+                v.activeSource = src === 'dme' || (src !== 'mhd' && noProfile) ? 'dme' : 'mhd';
                 if (v.activeSource === 'dme') v.active = all.dmeEthanol == null ? null : Math.round(all.dmeEthanol);
             }
             v.showSources = !!settings.get('fuelSources');

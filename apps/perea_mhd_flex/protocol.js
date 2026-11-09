@@ -15,16 +15,23 @@
  * F300 and F302 and clears all four when it connects: this app takes F303, or F301 when F303 is refused
  * (poller.js). The DME forgets the definition at an ignition cycle (then 22 F3 03 answers 7F 22 31):
  * define it again.
- * The addresses are ROM dependent: PROFILES holds the ROMs they were verified on, keyed by PRGID + CALID.
+ * The addresses are ROM dependent: PROFILES holds them per program family, the two id bytes of the SVK
+ * program entry (08 00 00 5D 55 .. -> 5D55, the B58 gen2 MG1), so every software version of that program
+ * (503C05, where they were verified; 50480C, seen on another car) gets the same addresses. Another family
+ * is "ROM not supported".
  */
 const { replyTo, NRC, hex } = require('./kit/diag');
 
 const DME = 0x12;
 
-/** The ROMs the addresses are known for. prgid / calid as MHD's log header prints them (7 bytes). */
+/**
+ * The program families the addresses are known for: family = the id bytes of the PRGID entry; prgid / calid
+ * (as MHD's log header prints them, 7 bytes) are the ROM they were captured on.
+ */
 const PROFILES = [
     {
-        name: 'MHD on MG1 (PRGID 00005D55503C05)',
+        name: 'MHD on MG1 B58 gen2 (program family 5D55)',
+        family: '5D55',
         prgid: '00005D55503C05', calid: '00008417503C1D', sgbd: '0F26B4',
         active: 'B00060C2',     // "Ethanol Content (Active)", 1 byte, %
         can: 'B00060D2',        // "Ethanol Content (CAN)", 1 byte, %
@@ -82,27 +89,36 @@ function findHex(data, s) {
     return -1;
 }
 
-/** The program / calibration ids in an SVK reply (7 bytes each as hex), to say which ROM this is. */
-function svkIds(data) {
+/**
+ * The program (08) and calibration (0D) entries in an SVK reply: [{ type, id (7 bytes as hex), family (the id's
+ * two id bytes, e.g. 5D55) }], each id once.
+ */
+function svkEntries(data) {
     const out = [];
     for (let i = 0; i + 8 <= data.length; i++) {
         if (SVK_TYPES.indexOf(data[i]) >= 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] !== 0) {
             const id = bytesHex(data.slice(i + 1, i + 8));
-            if (out.indexOf(id) < 0) out.push(id);
+            if (!out.some((e) => e.id === id)) out.push({ type: data[i], id, family: id.slice(4, 8) });
             i += 7;
         }
     }
     return out;
 }
 
-/** The profile whose PRGID and CALID both appear in the SVK replies (data arrays), with every id seen. */
+/** The program / calibration ids in an SVK reply (7 bytes each as hex), to say which ROM this is. */
+function svkIds(data) { return svkEntries(data).map((e) => e.id); }
+
+/**
+ * The profile of the program family found in the SVK replies (data arrays): a program entry (type 08) whose id
+ * bytes are the profile's `family`. { profile, seen (every id), families (of the program entries) }.
+ */
 function matchProfile(replies, profiles) {
     const datas = (replies || []).filter((d) => d && d.length);
-    const seen = [];
-    datas.forEach((d) => svkIds(d).forEach((id) => { if (seen.indexOf(id) < 0) seen.push(id); }));
-    const has = (s) => datas.some((d) => findHex(d, s) >= 0);
-    const profile = (profiles || PROFILES).find((p) => has(p.prgid) && has(p.calid)) || null;
-    return { profile, seen };
+    const entries = [];
+    datas.forEach((d) => svkEntries(d).forEach((e) => { if (!entries.some((x) => x.id === e.id)) entries.push(e); }));
+    const families = entries.filter((e) => e.type === 0x08).map((e) => e.family);
+    const profile = (profiles || PROFILES).find((p) => p.family && families.indexOf(p.family) >= 0) || null;
+    return { profile, seen: entries.map((e) => e.id), families };
 }
 
 /** accept() for a 2C request: its positive reply echoes the sub-function (and the identifier), or 7F 2C. */
@@ -179,7 +195,7 @@ function parseFuelDid(reply, did) {
 
 module.exports = {
     DME, PROFILES, PROBE, hexBytes, addressBytes, didBytes, bytesHex,
-    probeRequest, parseProbe, svkRequest, svkData, findHex, svkIds, matchProfile,
+    probeRequest, parseProbe, svkRequest, svkData, findHex, svkEntries, svkIds, matchProfile,
     acceptDefine, clearRequest, defineRequest, parseDefine, readRequest, parseRead, nrcText,
     FUEL, FUEL_K, fuelDidRequest, parseFuelDid,
 };

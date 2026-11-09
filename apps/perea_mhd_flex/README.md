@@ -14,9 +14,10 @@ only reads; nothing is written to the car.
 
 ![Flex Fuel](../../docs/screens/perea_mhd_flex.png)
 
-> **Experimental.** The addresses were captured on one car (G-series MG1, MHD 5.41, PRGID
-> `00005D55503C05`). On any other ROM the app says *ROM not supported* and sends no read: see
-> [Your ROM](#your-rom) to add it.
+> **Experimental.** The addresses were captured on one car (G-series MG1 B58 gen2, MHD 5.41, PRGID
+> `00005D55503C05`) and are applied to every software version of that program family (`5D55`; `50480C`
+> was seen on another car). On a DME of another family the app says *ROM not supported* and sends no
+> read: see [Your ROM](#your-rom) to add it.
 
 ## What leaves the head unit
 
@@ -99,7 +100,7 @@ ethanol as two amounts (`calc.js` is laid out for a second output).
 | **Tank capacity** | 40..100 L | 60 L | the fuel dial's scale and the overflow warning |
 | **Fuel source** | Auto, DME tank halves, Cluster (Kombi) | Auto | where the fuel in the tank comes from (above) |
 | **Show fuel sources** | on / off | off | the comparison line along the bottom |
-| **Active ethanol source** | MHD address, DME alcohol (550D) | MHD address | what the Active dial shows: MHD's byte at the profile's address, or the DME's own alcohol percentage (the dial then says *(DME)*); MISMATCH compares it with CAN as usual |
+| **Active ethanol source** | Auto, MHD address (5D55), DME alcohol (550D) | Auto | Auto: MHD's byte at the profile's address while the DME's program family has a profile, else the DME's own alcohol percentage (the dial then says *(DME)*); the other two force one. MISMATCH compares it with CAN as usual |
 
 The values are lists, so only those can be chosen (in the kit's Settings sheet and in the HMI's
 own settings screen alike). The −5 / +5 buttons are drawn only where the kit runs the screen (the
@@ -131,17 +132,20 @@ Code: `protocol.js` (bytes in and out, pure), `poller.js` (the states, one reque
 ## Your ROM
 
 The two addresses are RAM locations in MHD's part of the DME software, so they move with the
-ROM. `PROFILES` in `protocol.js` lists the ROMs they are known for:
+program. `PROFILES` in `protocol.js` lists the program families they are known for; a family is the
+two id bytes of the SVK program entry (`08 00 00 5D 55 ..` is `5D55`, the B58 gen2 MG1) and the
+profile applies to every software version of it (`prgid` / `calid` are the ROM it was captured on):
 
 ```js
-{ name: 'MHD on MG1 (PRGID 00005D55503C05)', prgid: '00005D55503C05', calid: '00008417503C1D',
-  sgbd: '0F26B4', active: 'B00060C2', can: 'B00060D2' }
+{ name: 'MHD on MG1 B58 gen2 (program family 5D55)', family: '5D55',
+  prgid: '00005D55503C05', calid: '00008417503C1D', sgbd: '0F26B4', active: 'B00060C2', can: 'B00060D2' }
 ```
 
 Without a profile the detail line under *ROM not supported* shows the ids seen and, when the DME answers
-`22 55 0D`, its own alcohol percentage (`DME alcohol 12.5 %`); with *Active ethanol source* set to *DME
-alcohol (550D)* the Active dial shows that percentage on any ROM. Whether it follows MHD's *Active* is
-something to check on a car with a profile, against MHD's own app, before relying on it.
+`22 55 0D`, its own alcohol percentage (`DME alcohol 12.5 %`); in *Auto* the Active dial then shows that
+percentage (CAN stays empty: it only comes from MHD's address). Whether it follows MHD's *Active* is
+something to check on a car with a profile, against MHD's own app, with *Active ethanol source* forced to
+*DME alcohol (550D)*.
 
 To add yours:
 
@@ -222,7 +226,7 @@ python3 kit/tools/build.py perea_mhd_flex
 ```
 
 ```sh
-node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.3.0.tgz
+node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.4.0.tgz
 ```
 
 The package lands in `<stick>/mgu-repo/local/` with a generated catalog; install it from the
