@@ -17,8 +17,9 @@
  * Fuel in the tank: between the steps above, once every `fuelPollMs` (10 s; 0 turns it off) and in every
  * state where the DME can answer (not no-link / link-down, never while paused or hidden), one round of the
  * standard identifiers any DME has: 22 5949 and 22 594A (the two tank halves, 0.5 l each; the dial takes the
- * median of the last 3 of each), 22 583B (the whole tank, litres) and OBD 01 2F (fuel level, 100/255 %). A
- * source the DME refuses, or that misses FUEL_MISSES answers in a row, is left alone for FUEL_RETRY_MS.
+ * median of the last 3 of each) and 22 583B (the whole tank, litres). A source the DME refuses, or that
+ * misses FUEL_MISSES answers in a row, is left alone for FUEL_RETRY_MS. (The OBD fuel level, 01 2F, was tried
+ * in 1.2.0 and dropped: on the car it tracks the range, not the fuel.)
  *
  * Everything the loop sends comes from protocol.js; `physical(sid, data, timeoutMs, accept)` is the
  * transport (kit/diag.js Diag.physical bound to the DME), `available()` says whether it is up and
@@ -31,7 +32,7 @@ const DEFAULTS = { dynamicDids: ['F303', 'F301'], pollMs: 500, readTimeoutMs: 15
 const RETRY_NO_MHD_MS = 30000, RETRY_ROM_MS = 60000, PROBE_RETRY_MS = 2000, PROBE_FAILS = 5;
 const STALE_MISSES = 3, GIVE_UP_MISSES = 10, SLOW_POLL_MS = 1000, REDEFINE_GAP_MS = 1000;
 const BACKOFF_MS = 5000, BACKOFF_MAX_MS = 30000;
-const FUEL_KEYS = ['dmeL', 'dmeR', 'dmeTotal', 'obd'], FUEL_MEDIAN = ['dmeL', 'dmeR'];
+const FUEL_KEYS = ['dmeL', 'dmeR', 'dmeTotal'], FUEL_MEDIAN = ['dmeL', 'dmeR'];
 const FUEL_RETRY_MS = 300000, FUEL_MISSES = 3, FUEL_LOG_MS = 60000, FUEL_STALE_MS = 60000, MEDIAN_N = 3;
 
 /** The median of a few numbers (the mean of the two middle ones when there is an even count). */
@@ -76,7 +77,7 @@ class Poller {
         this.definedAt = 0;
         this.lastReply = '';        // the last reply's bytes (hex), for the screen while values are not readable
         this._wake = null;
-        // the fuel sources: value (litres, or % for obd), when, the raw byte, the last 3 values (the median for the halves),
+        // the fuel sources: value (litres), when, the raw byte, the last 3 values (the median for the halves),
         // misses in a row, off (refused or quiet: left alone until `next`), the last exchange's bytes, seen (logged once)
         this.fuel = {};
         FUEL_KEYS.forEach((k) => { this.fuel[k] = { value: null, at: 0, raw: null, hist: [], misses: 0, off: false, next: 0, lastReply: '', seen: false }; });
@@ -245,18 +246,17 @@ class Poller {
         }
         const key = this.fuelQueue.shift(), f = this.fuel[key];
         if (f.off) { f.off = false; f.misses = 0; }           // the pause is over: try again
-        const obd = key === 'obd', did = P.FUEL[key];
-        const req = obd ? P.obdRequest(P.OBD_FUEL_PID) : P.fuelDidRequest(did);
+        const did = P.FUEL[key], req = P.fuelDidRequest(did);
         const reply = await this.physical(req.sid, req.data, this.cfg.readTimeoutMs, req.accept);
         f.lastReply = P.bytesHex([req.sid].concat(req.data)) + ' -> ' + (reply && reply.length ? P.bytesHex(reply) : 'no answer');
-        const r = obd ? P.parseObd(reply, P.OBD_FUEL_PID) : P.parseFuelDid(reply, did);
+        const r = P.parseFuelDid(reply, did);
         if (r.ok) {
-            const v = obd ? r.percent : r.litres;
+            const v = r.litres;
             f.hist.push(v);
             if (f.hist.length > MEDIAN_N) f.hist.shift();
             f.value = FUEL_MEDIAN.indexOf(key) >= 0 ? median(f.hist) : v;
             f.raw = r.raw; f.at = now; f.misses = 0;
-            if (!f.seen) { f.seen = true; this.log.info('perea_mhd_flex: fuel ' + key + ' ' + f.lastReply + ' = ' + v + (obd ? ' %' : ' l')); }
+            if (!f.seen) { f.seen = true; this.log.info('perea_mhd_flex: fuel ' + key + ' ' + f.lastReply + ' = ' + v + ' l'); }
         } else if (r.reason === 'timeout') {
             if (++f.misses >= FUEL_MISSES) this._fuelOff(key, now, 'no answer');
         } else {
@@ -278,7 +278,7 @@ class Poller {
         this.log.info('perea_mhd_flex: fuel ' + key + ' unavailable (' + why + '; ' + f.lastReply + '), next try in ' + Math.round(FUEL_RETRY_MS / 60000) + ' min');
     }
 
-    /** The fuel sources for the screen: { dmeL, dmeR, dmeTotal, obd: { value, at, raw, off, fresh, lastReply }, dme (the halves added, both fresh) }. */
+    /** The fuel sources for the screen: { dmeL, dmeR, dmeTotal: { value, at, raw, off, fresh, lastReply }, dme (the halves added, both fresh) }. */
     fuelView(now) {
         const out = {};
         FUEL_KEYS.forEach((k) => {

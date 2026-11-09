@@ -17,13 +17,12 @@
  * disabled" in amber when Active is 0 while CAN reads ethanol, and a MISMATCH badge when the two are
  * 10 points or more apart.
  *
- * Fuel level, from several sources at once so the finest one that answers on a car can be used (the
- * setting "Fuel source": Auto takes the first there is, DME, cluster, OBD; or one of them): the DME's two
- * tank halves (22 5949 / 22 594A, 0.5 l each, read by the poller between its MHD steps), the cluster's
- * SOME/IP de.bmw.infotainment.KombiIF statusRangeTankStatus.fluidLevelFuelTank (whole litres; 255 and up:
- * no data; read again every 10 s since a car may not notify it) and the OBD fuel level (01 2F, % of the
- * tank capacity set). A reading older than 60 s counts as gone. "Show fuel sources" draws them all on
- * the screen, and the raw values go to the log once a minute, to see which has decimals on your car.
+ * Fuel level, from two sources so the finer one that answers on a car can be used (the setting "Fuel
+ * source": Auto takes the DME, else the cluster; or one of them): the DME's two tank halves (22 5949 /
+ * 22 594A, 0.5 l each, read by the poller between its MHD steps) and the cluster's SOME/IP
+ * de.bmw.infotainment.KombiIF statusRangeTankStatus.fluidLevelFuelTank (whole litres; 255 and up: no data;
+ * read again every 10 s since a car may not notify it). A reading older than 60 s counts as gone. "Show fuel
+ * sources" draws them all on the screen, and the raw values go to the log once a minute.
  */
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
@@ -55,10 +54,10 @@ function demoValues(t) {
     return { active: phase < 6000 ? 0 : base, can: Math.max(0, Math.min(100, Math.round(can))), fuel: round1(24.6 + 8 * Math.sin(t / 60000)) };
 }
 
-/** Demo readings of every fuel source, consistent with `fuel` litres in a tank of `tank` litres (the sources line). */
-function demoFuelAll(fuel, tank) {
+/** Demo readings of every fuel source, consistent with `fuel` litres (the sources line). */
+function demoFuelAll(fuel) {
     const half = Math.round(fuel) / 2, dme = Math.round(fuel * 2) / 2;
-    return { kombi: Math.round(fuel), kombiL: Math.floor(half), kombiR: Math.ceil(half), dme, dmeL: round1(dme / 2), dmeR: round1(dme - dme / 2), dmeTotal: Math.round(fuel), obdPct: round1(fuel / tank * 100) };
+    return { kombi: Math.round(fuel), kombiL: Math.floor(half), kombiR: Math.ceil(half), dme, dmeL: round1(dme / 2), dmeR: round1(dme - dme / 2), dmeTotal: Math.round(fuel) };
 }
 
 mgu.run({
@@ -86,7 +85,7 @@ mgu.run({
             kombiL: tank.left != null && kombiFresh() ? tank.left : null,
             kombiR: tank.right != null && kombiFresh() ? tank.right : null,
             dme: src.dme, dmeL: src.dmeL.fresh ? src.dmeL.value : null, dmeR: src.dmeR.fresh ? src.dmeR.value : null,
-            dmeTotal: src.dmeTotal.fresh ? src.dmeTotal.value : null, obdPct: src.obd.fresh ? src.obd.value : null,
+            dmeTotal: src.dmeTotal.fresh ? src.dmeTotal.value : null,
         });
         const setting = (key) => num(settings.get(key), DEFAULTS[key]);
         /** -5 / +5 on the page: the target setting, kept to 10..100 (the setting's own steps) */
@@ -98,9 +97,9 @@ mgu.run({
             const all = fuelAll(v.fuel);
             if (demo()) {
                 Object.assign(v, demoValues(Date.now()), { state: 'reading', demo: true, stale: false });
-                v.fuelSource = 'demo'; v.fuelAll = demoFuelAll(v.fuel, v.tankCap);
+                v.fuelSource = 'demo'; v.fuelAll = demoFuelAll(v.fuel);
             } else {
-                const pick = pickFuel(all, settings.get('fuelSource'), v.tankCap);
+                const pick = pickFuel(all, settings.get('fuelSource'));
                 v.fuel = pick.litres; v.fuelSource = pick.source; v.fuelAll = all;
             }
             v.showSources = !!settings.get('fuelSources');

@@ -11,11 +11,11 @@
  * fill-up, or a sensor the map does not follow) the header says MISMATCH.
  *
  * GPU-safe: arc / circle / line / text / roundRect / fillRect only (the car's Recorder has no polygons).
- * v = Poller.view() + { demo, fuel (litres, from the source picked), fuelSource ('dme' | 'kombi' | 'obd' |
+ * v = Poller.view() + { demo, fuel (litres, from the source picked), fuelSource ('dme' | 'kombi' |
  * 'demo' | null), fuelAll (every source's reading, for the sources line), showSources (the setting),
  * target, purity, tankCap (%, %, litres: the settings), setTarget(delta) }; LOGO = logo.js (runs of a
  * palette; `ink` entries take the theme's text colour). With showSources a line along the bottom compares
- * the cluster's litres (and its halves as sent), the DME's halves and total, and the OBD level.
+ * the cluster's litres (and its halves as sent) with the DME's halves and total.
  */
 const { withAlpha, rgba } = require('./kit/canvas');
 const C = require('./calc');
@@ -30,7 +30,7 @@ const ROW_T = 330, ROW_R = 410, ROW_D = 446;              // target buttons' top
 const BTN_W = 76, BTN_H = 42, BTN_X = [372, 462];
 const SEP_X = 740;
 const SOURCES_Y = 484;          // baseline of the fuel sources line (showSources)
-const SOURCE_NAMES = { dme: 'DME', kombi: 'Kombi', obd: 'OBD' };
+const SOURCE_NAMES = { dme: 'DME', kombi: 'Kombi' };
 const TARGET_STEP = 5;
 const DEFAULTS = { target: 85, purity: 99, tank: 60 };    // (the settings' defaults, for a view without them)
 
@@ -112,15 +112,14 @@ function fuelLine(v) {
 }
 
 /**
- * Every fuel source side by side (the "Show fuel sources" setting), to see on the car which one has decimals:
- * the cluster's litres with its two halves as sent, the DME's halves and their sum with its whole-tank
- * identifier, and the OBD level with the litres it means over the tank capacity. '--' where nothing came.
+ * Every fuel source side by side (the "Show fuel sources" setting), to compare them with the cluster's gauge:
+ * the cluster's litres with its two halves as sent, and the DME's halves and their sum with its whole-tank
+ * identifier. '--' where nothing came.
  */
 function sourcesLine(v) {
-    const a = v.fuelAll || {}, tank = isNum(v.tankCap) ? v.tankCap : DEFAULTS.tank;
+    const a = v.fuelAll || {};
     const n = (x, d) => (isNum(x) ? x.toFixed(d) : '--');
-    const obdL = isNum(a.obdPct) ? a.obdPct / 100 * tank : null;
-    return 'Kombi ' + n(a.kombi, 0) + ' L (L ' + n(a.kombiL, 0) + ' R ' + n(a.kombiR, 0) + ')   \u00b7   DME ' + n(a.dmeL, 1) + ' + ' + n(a.dmeR, 1) + ' = ' + n(a.dme, 1) + ' L (583B ' + n(a.dmeTotal, 0) + ' L)   \u00b7   OBD ' + n(a.obdPct, 1) + ' % = ' + n(obdL, 1) + ' L';
+    return 'Kombi ' + n(a.kombi, 0) + ' L (L ' + n(a.kombiL, 0) + ' R ' + n(a.kombiR, 0) + ')   \u00b7   DME ' + n(a.dmeL, 1) + ' + ' + n(a.dmeR, 1) + ' = ' + n(a.dme, 1) + ' L (583B ' + n(a.dmeTotal, 0) + ' L)';
 }
 
 /**

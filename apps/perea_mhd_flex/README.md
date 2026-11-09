@@ -55,17 +55,18 @@ finest one that answers on your car (**Fuel source** in Settings):
 |---|---|---|---|
 | **DME tank halves** | `22 59 49` and `22 59 4A` to the DME, between the MHD reads | **0.5 L** each, added | the raw sensors (the cluster filters them); the dial shows the median of the last three reads of each half |
 | **Cluster (Kombi)** | the SOME/IP field, read again every 10 s | 1 L | what the driver sees; `255` and up means no data |
-| **OBD level** | `01 2F` to the DME | 100/255 of the tank capacity set | may be the same coarse figure rescaled |
 | DME whole tank | `22 58 3B` | 1 L | shown on the sources line only |
 
-**Auto** (the default) takes the first that answers in that order. A source the DME refuses, or
+**Auto** (the default) takes the DME's halves when they answer, else the cluster. (1.2.0 also read the
+OBD fuel level, `01 2F`: on the car it follows the range rather than the fuel, so it was dropped.) A
+source the DME refuses, or
 that does not answer three times in a row, is left alone for five minutes. A reading older than
 60 s counts as gone (the dial shows `--`). The identifiers come from Live Data's `DME8FF_R` catalog
 (B58 / B48 engines) and are read in the default session; nothing is written. The cluster's
 interface is `_optional` in `app.json`: a unit without it installs the app without that source.
 
 Turn on **Show fuel sources** to see them all along the bottom of the screen, `Kombi 24 L (L 12
-R 12) · DME 12.0 + 12.5 = 24.5 L (583B 24 L) · OBD 40.8 % = 24.5 L` (the cluster's two halves
+R 12) · DME 12.0 + 12.5 = 24.5 L (583B 24 L)` (the cluster's two halves
 as sent, their scale unknown), and compare them with the gauge in the cluster; the log has the
 raw bytes of every source once a minute (`fuel dmeL=...`) and the cluster's raw values
 (`fluidLevelFuelTank raw=...`). `7F 22 31` in the log means the DME has no such identifier.
@@ -95,7 +96,7 @@ ethanol as two amounts (`calc.js` is laid out for a second output).
 | **Target ethanol** | 10..100 %, in steps of 1 | 85 % | the blend to reach; also moved by the **−5 / +5** buttons on the page |
 | **Ethanol purity** | 10..100 %, in steps of 1 | 99 % | the ethanol you pour in (E85 from the pump: 85 or less) |
 | **Tank capacity** | 40..100 L | 60 L | the fuel dial's scale and the overflow warning |
-| **Fuel source** | Auto, DME tank halves, Cluster (Kombi), OBD level | Auto | where the fuel in the tank comes from (above) |
+| **Fuel source** | Auto, DME tank halves, Cluster (Kombi) | Auto | where the fuel in the tank comes from (above) |
 | **Show fuel sources** | on / off | off | the comparison line along the bottom |
 
 The values are lists, so only those can be chosen (in the kit's Settings sheet and in the HMI's
@@ -214,7 +215,7 @@ python3 kit/tools/build.py perea_mhd_flex
 ```
 
 ```sh
-node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.2.0.tgz
+node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.2.1.tgz
 ```
 
 The package lands in `<stick>/mgu-repo/local/` with a generated catalog; install it from the

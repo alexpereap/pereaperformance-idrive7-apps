@@ -37,20 +37,15 @@ function blend(i) {
 }
 
 /**
- * pickFuel(all, mode, tank): the litres the dial and the calculator use, from what the car gave:
- * all = { dme (the DME's two tank halves added, 0.5 l), kombi (the cluster's litres), obdPct (OBD fuel level, %) },
- * each null when not read. mode = the "Fuel source" setting: 'auto' takes the first there is in the order
- * DME, cluster, OBD (the finest first); 'dme' / 'kombi' / 'obd' take that one or nothing. The OBD percentage
- * becomes litres over `tank` (the capacity setting). Returns { litres, source } (source null when nothing).
+ * pickFuel(all, mode): the litres the dial and the calculator use, from what the car gave:
+ * all = { dme (the DME's two tank halves added, 0.5 l), kombi (the cluster's litres) }, each null when not
+ * read. mode = the "Fuel source" setting: 'auto' takes the DME halves when there are, else the cluster;
+ * 'dme' / 'kombi' take that one or nothing. Returns { litres, source } (source null when nothing).
  */
-const ORDER = ['dme', 'kombi', 'obd'];
-function pickFuel(all, mode, tank) {
+const ORDER = ['dme', 'kombi'];
+function pickFuel(all, mode) {
     const a = all || {};
-    const by = {
-        dme: isNum(a.dme) ? a.dme : null,
-        kombi: isNum(a.kombi) ? a.kombi : null,
-        obd: isNum(a.obdPct) && isNum(tank) ? round1(a.obdPct / 100 * tank) : null,
-    };
+    const by = { dme: isNum(a.dme) ? a.dme : null, kombi: isNum(a.kombi) ? a.kombi : null };
     if (ORDER.indexOf(mode) >= 0) return { litres: by[mode], source: by[mode] == null ? null : mode };
     for (let i = 0; i < ORDER.length; i++) if (by[ORDER[i]] != null) return { litres: by[ORDER[i]], source: ORDER[i] };
     return { litres: null, source: null };
