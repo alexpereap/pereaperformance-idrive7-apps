@@ -15,6 +15,10 @@ jobs:
           python-version: '3.12'
       - run: node kit/tools/test_mhd_flex.js
       - run: node kit/tools/test_runtime.js
+      - name: build.py output - the iDrive 7 description and manifest unchanged, the iDrive 8 ones by Hmi8's rules
+        run: python3 kit/tools/test_build.py
+      - name: The start sequence on both SDK shapes (iDrive 7 as before, iDrive 8's lifecycle)
+        run: node kit/tools/test_start.js
       - name: Locale catalogs match their TSVs and hold only strings this repository shows
         run: |
           python3 kit/tools/sync_locales.py

@@ -188,10 +188,14 @@ shows on the dark themes). It needs Pillow (`pip install pillow`).
 node kit/tools/test_mhd_flex.js                 # protocol, poller states, filters, calculator, screen, main (no car, no SDK)
 python3 kit/tools/build.py --preview-only perea_mhd_flex
 node kit/tools/preview.js dist/perea_mhd_flex out/    # frames as PNG (demo data)
-node kit/tools/emu.js perea_mhd_flex            # the app in the browser (demo data: nothing answers UDS there)
+node kit/tools/emu.js perea_mhd_flex            # the app in the browser (demo data: nothing answers UDS there); --hmi id8 for iDrive 8
 ```
 
 ## Install
+
+iDrive 7 is supported; iDrive 8 is experimental and not yet verified on a car (the repository's
+README has the differences and what to send back from a first run). There the app is drawn by the
+Store's renderer only, is operated by touch, and Settings is the header's tab.
 
 The app needs a renderer on the head unit (`needs: ["renderer"]` in `mgu-repo.json`): the
 [MGU Store](https://github.com/robertnisipeanu/mgu-store)'s own Renderer, or `idrive7-renderd`
@@ -226,7 +230,7 @@ python3 kit/tools/build.py perea_mhd_flex
 ```
 
 ```sh
-node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.4.0.tgz
+node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.5.0.tgz
 ```
 
 The package lands in `<stick>/mgu-repo/local/` with a generated catalog; install it from the

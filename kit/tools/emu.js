@@ -58,6 +58,9 @@ const WEB = path.join(ROOT, 'kit', 'emu', 'web');
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
 const PORT = Number(opt('--port', 8077));
+// the head unit emulated: iDrive 7 (1920 x 720, the default) or iDrive 8 (--hmi id8: 2880 x 960, the app in the
+// renderer's layer over the app area 0,76 2880x764, touch only, no HMI image or bar)
+const HMI_ID = String(opt('--hmi', 'id7')).toLowerCase() === 'id8' ? 'ID8' : 'ID7';
 const BG = (() => { const b = opt('--bg', null); return b ? path.resolve(b) : null; })();
 // touch routing offered by the renderer (the Store's mgu-render: on; --no-touch or the page's switch: a renderer without
 // it, where the kit draws the slim bar over the HMI's own buttons and every tap is the HMI's)
@@ -67,7 +70,7 @@ const listApps = () => fs.readdirSync(path.join(ROOT, 'apps')).filter((d) => fs.
 /** { id: title } from each app's app.json (the HMI's tile labels) */
 const appTitles = () => listApps().reduce((o, id) => { try { o[id] = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', id, 'app.json'), 'utf8')).title || id; } catch (e) { o[id] = id; } return o; }, {});
 let appId = args[0];
-if (!appId || listApps().indexOf(appId) < 0) { console.error('usage: node kit/tools/emu.js <app> [--port 8077] [--bg file.png] [--no-touch]\napps: ' + listApps().join(' ')); process.exit(2); }
+if (!appId || listApps().indexOf(appId) < 0) { console.error('usage: node kit/tools/emu.js <app> [--port 8077] [--hmi id7|id8] [--bg file.png] [--no-touch]\napps: ' + listApps().join(' ')); process.exit(2); }
 // (a short path: Unix socket paths are limited to ~104 bytes)
 const SOCK = path.join(os.tmpdir(), 'mgu-emu-' + process.pid + '.sock');
 const MAX_MSG = 24 << 20;                       // a bigger message ends the connection (PROTOCOL.md "Framing")
@@ -183,7 +186,7 @@ server.on('upgrade', (req, sock, head) => {
     sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + acc + '\r\n\r\n');
     const ws = new Ws(sock, head);
     pages.add(ws);
-    ws.send({ t: 'hello', apps: listApps(), titles: appTitles(), app: appId, bg: !!BG, touch: Touch.on });
+    ws.send({ t: 'hello', apps: listApps(), titles: appTitles(), app: appId, bg: !!BG, touch: Touch.on, hmi: HMI_ID, screen: SCREEN });
     if (App.spec) ws.send({ t: 'spec', spec: App.spec, values: App.values });
     ws.send({ t: 'screens', stack: App.stack, closed: App.closed });
     ws.send(App.status);
@@ -200,8 +203,13 @@ const X = { MODE: 0x4d520001, GRAB: 0x4d520002, PIXMAP: 0x4d520003, PIXELS: 0x4d
 // shortest payload per type (bytes), as kit/renderd/src/main.c checks them; shorter: "bad message"
 const MIN = { 2: 28, 3: 4, 4: 12, 5: 8, 6: 12, 8: 4, 9: 4, 10: 4, 11: 4, 12: 4, 13: 8, 14: 4 };
 MIN[X.MODE] = 4; MIN[X.GRAB] = 4; MIN[X.PIXMAP] = 20; MIN[X.PIXELS] = 4; MIN[X.PALETTE] = 4 + 768;
-const SCREEN = { w: 1920, h: 720 };
-const BACK_COL = { w: 84, h: 530, head: 76 };   // the HMI's home (in its strip) and back arrow column: must match display.js HMI.left / colEnd / status.h
+const ID8 = HMI_ID === 'ID8';
+const SCREEN = ID8 ? { w: 2880, h: 960 } : { w: 1920, h: 720 };
+// the renderer's app area on each head unit (mgu-store native/mgu-render: X_READY)
+const APP_AREA = ID8 ? [0, 76, 2880, 764] : [108, 82, 1790, 638];
+// the HMI's home (in its strip) and back arrow column: must match display.js HMI.left / colEnd / status.h
+// (iDrive 8: no column; the back arrow is in the title strip's left end)
+const BACK_COL = ID8 ? { w: 160, h: 76, head: 0 } : { w: 84, h: 530, head: 76 };
 const T0 = Date.now();
 let R = null;                                   // the app's connection
 let pageFps = 60;
@@ -278,8 +286,8 @@ function handle(c, type, p, whole) {
         c.touch = Touch.on;                 // (what this connection was offered: the app reads it here only)
         if (f.slice(1).indexOf('proto=mgu-render/1') >= 0) {
             c.dialect = 'native';
-            // version 1, layer mode, caps: touch routing (if on) | controller gate | pixmaps; no embed; app area; pixmap side; 60 Hz
-            toApp(msg(X.READY, [1, 1, (c.touch ? 1 : 0) | 2 | 8, 0, 0, 0, 0, 108, 82, 1790, 638, 2048, 60000]));
+            // version 1, layer mode, caps: touch routing (if on) | controller gate (iDrive 7) | pixmaps; no embed; app area; pixmap side; 60 Hz
+            toApp(msg(X.READY, [1, 1, (c.touch ? 1 : 0) | (ID8 ? 0 : 2) | 8, 0, 0, 0, 0].concat(APP_AREA, [2048, 60000])));
         }
         toApp(msg(E.READY, [4, SCREEN.w, SCREEN.h, c.touch ? 1 : 0]));
         appLog('info', 'renderer: ' + c.app + ' connected' + (c.dialect ? ', mgu-render/1' : ''));
@@ -673,7 +681,7 @@ function start(id) {
         // the user left the app (the page shows the HMI's app picker): a rebuilt app starts without opening, as one
         // the car restarts in the background; a newly chosen app opens
         App.opened = false;
-        const env = Object.assign({}, process.env, { MGU_RENDERD_SOCKET: SOCK, MGU_EMU_CLOSED: App.closed && !App.openNext ? '1' : '' });
+        const env = Object.assign({}, process.env, { MGU_RENDERD_SOCKET: SOCK, MGU_EMU_CLOSED: App.closed && !App.openNext ? '1' : '', MGU_EMU_HMI: HMI_ID });
         App.openNext = false;
         delete env.MGU_RENDERD_FILE;
         const ch = App.child = fork(path.join(__dirname, 'hu-stub.js'), [path.join(ROOT, 'dist', id), data], { cwd: data, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });

@@ -36,6 +36,13 @@
  * touch while open (a finger drags their lists); push left goes back. Doom ("chrome": false)
  * keeps the upstream dialect. Should the renderer's foreground gate not have the app in front
  * while its screen shows, the app draws in the HMI's own image meanwhile (blocked).
+ *
+ * iDrive 8 (ui.hmi 'ID8', or a 2880 x 960 screen): the HMI has no image for the app's picture and no
+ * button bar of ours, and there is no controller gate. The renderer's layer covers the app area it
+ * reports (0,76 2880x764: under the HMI's title strip, over the climate bar), the kit runs the screen
+ * (touch only): its header sits at the top of that area, the 1600 x 520 page is scaled into the rest
+ * and centred, Settings is the header's tab and opens the kit's sheet. No "standard" layout and no
+ * software path there; without a usable renderer the HMI's page says so (ui.note).
  */
 const { Recorder, play } = require('./record');
 const { Canvas } = require('./canvas');
@@ -65,6 +72,17 @@ const HMI = {
     headBg: '#000000',                          // the HMI's title / status strip
     status: { x: 1340, h: 76 },                 // status icons top right (notifications .. clock)
 };
+/* iDrive 8's centre display: the app area the Store's renderer reports there (the HMI's title and status strip
+ * is above it, y < 76; the climate bar, always on, below it from y 840). No back arrow column, and the
+ * status icons are outside the area, so the header runs the whole width. */
+const ID8 = {
+    id: 'ID8',
+    screen: { w: 2880, h: 960 },
+    area: { x: 0, y: 76, w: 2880, h: 764 },
+    left: 0, colEnd: 0, headBg: '#000000', status: null,
+};
+/* first on-car sessions: the kit draws what it found (HMI, renderer, placement) in the page's left margin */
+const ID8_DIAG = true;
 /* full-screen layout, in the surface's pixels (it covers the whole screen) */
 const FULL = {
     headH: 80,                                  // header in the HMI's title strip
@@ -97,6 +115,9 @@ class Display {
         this.sheet = null;                           // sheet.js page drawn over the app's (openSheet)
         this.ccuLast = null;                         // last controller state (knob counter, press, push)
         this.ownHidden = new Set();                  // more bar buttons left out where the kit runs the screen (hideButton)
+        this.geo = HMI;                              // the head unit's geometry: HMI (iDrive 7) or ID8 (_geo)
+        this.onSettings = null;                      // opens the settings where no RHMI button does (mgu.js wireSettings)
+        this.diagExtra = null;                       // more lines for the iDrive 8 diagnostics column (mgu.js)
         G.onConfirm(() => { this.lastWords = null; this.tickHandlers.forEach((fn) => fn()); });   // a reset asks / runs out
         const canvasScreens = (spec.screens || []).filter((s) => s.kind === 'canvas');
         this.screen = canvasScreens[0] || null;
@@ -142,7 +163,8 @@ class Display {
 
     /** Start / stop the GPU path for the 'renderer' setting; wait for the socket if it isn't there yet. */
     _mode() {
-        const want = (process.env.MGU_RENDERER || this.settings.get('renderer') || 'auto') !== 'software';
+        // (iDrive 8: the renderer or nothing - the HMI has no image component to draw in)
+        const want = this.id8() || (process.env.MGU_RENDERER || this.settings.get('renderer') || 'auto') !== 'software';
         if (this.poll) { clearInterval(this.poll); this.poll = null; }
         if (!want) {
             if (this.gpu) { this.gpu.show(false); this.gpu.close(); this.gpu = null; this.place = null; this._lost(); }
@@ -202,15 +224,39 @@ class Display {
     /** held: the app asked (grab), or the kit runs the screen (own) and the HMI has the controller gate */
     _grab() {
         if (!this.gpu) return;
+        if (this.id8()) { this.gpu.grab(false); return; }     // no controller gate in Hmi8: touch only
         const gate = !this.gpu.native || !this.gpu.info || this.gpu.info.controller;
         this.gpu.grab(this.grabbing || (this.own() && gate && !process.env.MGU_NO_GRAB));
     }
 
-    /** The kit runs the screen: mgu-render/1 with touch, full-screen layout. */
-    own() { return !!(this.gpu && this.gpu.ready && !this.blocked && this.gpu.native && this.gpu.touch && this.place && this.place.full); }
+    /** iDrive 8: the HMI the app's UI description says it runs on (mgu.js), or the renderer's screen. */
+    id8() {
+        if (this.ui && this.ui.hmi) return this.ui.hmi === 'ID8';
+        const g = this.gpu;
+        return !!(g && g.ready && g.screen.w === ID8.screen.w && g.screen.h === ID8.screen.h);
+    }
+    /** The geometry of the head unit's screen: HMI, or ID8 with the app area the renderer reported (if it makes sense). */
+    _geo() {
+        if (!this.id8()) return HMI;
+        const g = this.gpu, scr = g && g.ready ? g.screen : ID8.screen;
+        const a = g && g.xready && g.xready.appArea;
+        const sane = a && a.w >= 800 && a.h >= 400 && a.x >= 0 && a.y >= 0 && a.x + a.w <= scr.w && a.y + a.h <= scr.h;
+        // (a screen that is not 2880 x 960 and no area reported: the same strips, title above and climate bar below)
+        const area = sane ? { x: a.x, y: a.y, w: a.w, h: a.h }
+            : scr.w === ID8.screen.w && scr.h === ID8.screen.h ? ID8.area
+                : { x: 0, y: ID8.area.y, w: scr.w, h: Math.max(400, scr.h - ID8.area.y - (ID8.screen.h - ID8.area.y - ID8.area.h)) };
+        return Object.assign({}, ID8, { screen: { w: scr.w, h: scr.h }, area, areaFrom: sane ? 'X_READY' : 'default' });
+    }
+    /** The kit runs the screen: mgu-render/1 with touch, full-screen layout (iDrive 8: any renderer that routes touch). */
+    own() {
+        const g = this.gpu;
+        if (this.id8()) return !!(g && g.ready && !this.blocked && g.touch && this.place && this.place.full);
+        return !!(g && g.ready && !this.blocked && g.native && g.touch && this.place && this.place.full);
+    }
     /** own() but for the placement, which depends on it (the bar's height): the renderer and layout allow it. */
     ownable() {
         const g = this.gpu;
+        if (this.id8()) return !!(g && g.ready && g.touch);
         return !!(g && g.ready && g.native && g.touch && this.layout() === 'full' && g.screen.w === HMI.screen.w && g.screen.h === HMI.screen.h);
     }
     /** Settings is the header's last tab where the kit runs the screen (the app has a Settings button). */
@@ -226,7 +272,13 @@ class Display {
     /** Open header tab i: the app's page, or the settings (Settings tab). */
     _openTab(i) {
         const tl = this._tabList();
-        if (i === tl.settings) { if (!(this.sheet && this.sheet.settings)) this._click('BTN_SETTINGS'); return; }
+        if (i === tl.settings) {
+            if (this.sheet && this.sheet.settings) return;
+            // the HMI's Settings button where there is one (it opens the sheet: mgu.js), else the kit's own opener
+            if (this.ui.rhmi && this.ui.rhmi.getByName('BTN_SETTINGS')) this._click('BTN_SETTINGS');
+            else if (this.onSettings) try { Promise.resolve(this.onSettings()).catch((e) => this.log.error('settings', e)); } catch (e) { this.log.error('settings', e); }
+            return;
+        }
         const closed = !!this.sheet;
         this.closeSheet();
         if (this.onTab) try { Promise.resolve(this.onTab(i, closed)).catch((e) => this.log.error('tab', e)); } catch (e) { this.log.error('tab', e); }
@@ -375,7 +427,7 @@ class Display {
         if (p.tab != null) return ((this.chromeRec && this.chromeRec.tabRects) || []).find((q) => q.i === p.tab) || null;
         if (p.tgt) return { x: p.tgt.x * k + pl.ox, y: p.tgt.y * k + pl.oy, w: p.tgt.w * k, h: p.tgt.h * k };
         if (p.bar) { const b = this.buttons().find((q) => q.id === p.bar); return b ? { x: b.x - this.barOff - pl.x, y: pl.h - this.barH(), w: b.w, h: this.barH() } : null; }
-        if (p.scroll) { const hx = HMI.left - pl.x; return { x: hx, y: this.headH(), w: pl.w - hx, h: pl.h - this.barH() - this.headH() }; }
+        if (p.scroll) { const hx = this.geo.left - pl.x; return { x: hx, y: this.headH(), w: pl.w - hx, h: pl.h - this.barH() - this.headH() }; }
         return null;
     }
     /**
@@ -474,7 +526,7 @@ class Display {
         const pl = this.place;
         const logical = (q) => (r ? q : { i: q.i, x: (q.x - pl.ox) / pl.scale, y: (q.y - pl.oy) / pl.scale, w: q.w / pl.scale, h: q.h / pl.scale });
         this.tabs = (rects || []).map(logical);
-        const W = pl.w, hx = HMI.left - pl.x, by = pl.h - this.barH();
+        const W = pl.w, hx = Math.max(0, this.geo.left - pl.x), by = pl.h - this.barH();
         if (this.own()) {
             // header (tabs), page and the slim bar: the back column and the status corner stay the HMI's
             this.gpu.claim([{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: pl.h - this.headH() }].map(logical));
@@ -494,7 +546,7 @@ class Display {
         // Where the kit runs the screen and only an HMI popup (Option, a call) covers it, the HMI's image
         // stays plain: the renderer's picture comes back when the popup goes.
         const L = this.last;
-        if (L && !this.active() && this.ui.isVisible(this.screen.name)) {
+        if (L && !this.ui.noImage && !this.active() && this.ui.isVisible(this.screen.name)) {
             const plain = this.ownable() && !this.blocked;
             const cv = new Canvas(L.w, L.h);
             if (plain) cv.clear(this.theme().bg); else play(L.frame.words(), cv);
@@ -509,6 +561,7 @@ class Display {
     /** The HMI's own bar buttons: hidden where the kit runs the screen (its bar, tabs and page buttons
      *  take their place), so none shows around an HMI popup; shown for every other path. */
     _hmiBar() {
+        if (this.id8()) return;             // (no bar buttons in the iDrive 8 description)
         const hide = this.ownable() && !this.blocked;
         if (this.hmiBarHidden === hide) return;
         this.hmiBarHidden = hide;
@@ -516,6 +569,7 @@ class Display {
     }
 
     layout() {
+        if (this.id8()) return 'full';
         const v = this.settings.get('layout') || 'full';
         return LAYOUTS.indexOf(v) >= 0 ? v : 'full';
     }
@@ -524,8 +578,20 @@ class Display {
     _place() {
         if (!this.gpu || !this.gpu.ready) return;
         const scr = this.gpu.screen, v = this.layout();
+        this.geo = this._geo();
         let pl;
-        if (v === 'standard' || scr.w !== HMI.screen.w || scr.h !== HMI.screen.h) {
+        if (this.geo.id === 'ID8') {
+            // the layer is the app area; the header at its top, the page scaled into the rest and centred
+            const A = this.geo.area, src = FULL.src;
+            const ah = A.h - this.headH() - this.barH();
+            const s = Math.floor(Math.min(A.w / src.w, (ah - 2 * PAGE_GAP) / src.h) * 1000) / 1000;
+            pl = {
+                x: A.x, y: A.y, w: A.w, h: A.h, full: true,
+                scale: s,
+                ox: Math.round((A.w - src.w * s) / 2 - src.x * s),
+                oy: Math.round(this.headH() + (ah - src.h * s) / 2 - src.y * s),
+            };
+        } else if (v === 'standard' || scr.w !== HMI.screen.w || scr.h !== HMI.screen.h) {
             pl = { x: HMI.img.x, y: HMI.img.y, w: HMI.img.w, h: HMI.img.h, scale: 1, ox: 0, oy: 0, full: false };
         } else {
             // the surface covers the whole screen, so the HMI's own bar can't show under the back
@@ -564,7 +630,7 @@ class Display {
         this.recorders.clear();             // text sizes depend on the scale
         this.app = null; this.outRec = null;
         this.lastWords = null;              // a new placement (or its dropped resources) needs a frame, the same or not
-        this.log.info('display: renderer placement ' + JSON.stringify(pl) + ' (layout ' + v + ')');
+        this.log.info('display: renderer placement ' + JSON.stringify(pl) + ' (layout ' + v + (this.geo.id === 'ID8' ? ', iDrive 8, app area ' + JSON.stringify(this.geo.area) + ' from ' + this.geo.areaFrom + ', screen ' + scr.w + 'x' + scr.h : '') + ')');
         // (only a real change: hideButton places again for every button it hides)
         const key = JSON.stringify([pl, this.own(), this.screen ? this.buttons().map((b) => b.id) : []]);
         if (key !== this.layoutKey) { this.layoutKey = key; this._layoutChanged(); }
@@ -643,6 +709,8 @@ class Display {
         if (r.chrome && r.chrome.tabs) this.tabInfo = r.chrome.tabs;
         else if (r.tabInfo) this.tabInfo = r.tabInfo;
         if (!this.sheet) { this.pageTargets = r.targets || []; this.pageScroll = r.scroll && typeof r.scroll === 'object' ? r.scroll : !!r.scroll; }
+        // no image component in the HMI (iDrive 8) and the renderer is not showing us: the frame is only kept
+        if (this.ui.noImage && !this.active()) { this.app = null; this._keep(name, r, softImage); return Promise.resolve(); }
         // a sheet is over the page: the app's frames wait (the last one comes back when it closes)
         if (this.sheet && this.active() && this.place.full) {
             if (r.chrome) this.saved = Object.assign({}, this.saved || {}, {
@@ -678,7 +746,7 @@ class Display {
             else this._claimTabs(r.tabRects, r);
             // the HMI's own image under the renderer's surface: a plain background, once
             const t = this.theme();
-            if (this.bgShown !== t.bg) {
+            if (this.bgShown !== t.bg && !this.ui.noImage) {
                 this.bgShown = t.bg;
                 return softImage(name, new Canvas(r.w, r.h).clear(t.bg));
             }
@@ -758,6 +826,7 @@ class Display {
         const L = this.last;
         if (!L || this.softDone || !this.active() || !this.shownT || Date.now() - this.shownT < 2000 || (this.tickT || 0) > this.shownT) return;
         this.softDone = true;
+        if (this.ui.noImage) { this.log.warn('display: no frame taken by the renderer 2 s after showing (no HMI image to fall back to on iDrive 8)'); return; }
         this.log.info('display: no frame taken by the renderer 2 s after showing - the last frame drawn in the HMI too');
         const cv = new Canvas(L.w, L.h);
         play(L.frame.words(), cv);
@@ -781,19 +850,22 @@ class Display {
      */
     _drawChrome(r) {
         const pl = this.place, t = this.theme(), W = pl.w, H = pl.h;
-        const c = this.chromeRec || (this.chromeRec = new Recorder(W, H));
+        const geo = this.geo, id8 = geo.id === 'ID8';
+        const c = this.chromeRec && this.chromeRec.w === W && this.chromeRec.h === H ? this.chromeRec : (this.chromeRec = new Recorder(W, H));
         c.reset();
         const tb = this.own() ? this._tabList() : r.chrome.tabs || { tabs: [], sel: -1, badges: [] };
         // compact header in the HMI strip's own black, only as wide as its name, tabs and badges:
         // right of it the HMI's strip shows through (radio station, phone signal, status icons)
-        const hx = HMI.left - pl.x;
-        const end = G.header(c, Object.assign({}, t, { bg: HMI.headBg }), hx, 0, HMI.status.x - pl.x - hx, FULL.headH,
+        // (iDrive 8: the header is inside the app area, under the HMI's strip, and runs the whole width)
+        const hx = Math.max(0, geo.left - pl.x);
+        const headW = id8 ? W - hx : geo.status.x - pl.x - hx;
+        const end = G.header(c, Object.assign({}, t, { bg: geo.headBg }), hx, 0, headW, FULL.headH,
             this.screen.title || this.spec.title, tb.tabs, tb.sel, tb.badges, true, true);
         // the HMI's own title is in the strip under the header: a narrower header (a sheet: no tabs) stays
         // as wide as the app's widest, so none of that title shows beside it
         if (!this.sheet) this.headMax = Math.max(this.headMax || 0, end);
-        const sx = this.headEnd = Math.min(HMI.status.x - pl.x, Math.ceil(Math.max(end, this.headMax || 0)));
-        if (sx > end) { c.fillRect(end, 0, sx - end, FULL.headH - 2, HMI.headBg); c.fillRect(end, FULL.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
+        const sx = this.headEnd = id8 ? W : Math.min(geo.status.x - pl.x, Math.ceil(Math.max(end, this.headMax || 0)));
+        if (sx > end) { c.fillRect(end, 0, sx - end, FULL.headH - 2, geo.headBg); c.fillRect(end, FULL.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
         // the tab the controller is on (the kit holds it: Display._ccu)
         const ft = this.focusTab != null && (!this.sheet || this.sheetHead) && (c.tabRects || []).find((q) => q.i === this.focusTab);
         if (ft) c.strokeRoundRect(ft.x + 4, ft.y + 10, ft.w - 8, ft.h - 20, 10, 2, t.sel || t.accent);
@@ -808,8 +880,10 @@ class Display {
         else if (sb && sb.bar) c.roundRect((sb.bar.x - 2) * k + pl.ox, sb.bar.y * k + pl.oy, (sb.bar.w + 4) * k, sb.bar.h * k, (sb.bar.w / 2 + 2) * k, t.sel || t.accent);
         if (pt) c.strokeRoundRect(pt.x * k + pl.ox - 5, pt.y * k + pl.oy - 5, pt.w * k + 10, pt.h * k + 10, (pt.r != null ? pt.r : pt.h / 2) * k + 5, 3, t.sel || t.accent);
         // the strip's bottom edge continues under the see-through part
-        c.fillRect(sx, 0, W - sx, FULL.headH, HMI.headBg);
-        c.fillRect(sx, FULL.headH - 2, W - sx, 2, G.withAlpha('#ffffff', 0.22));
+        if (!id8) {
+            c.fillRect(sx, 0, W - sx, FULL.headH, geo.headBg);
+            c.fillRect(sx, FULL.headH - 2, W - sx, 2, G.withAlpha('#ffffff', 0.22));
+        }
         // slim bar: each label over its HMI button
         const by = H - this.barH();
         const btns = this.buttons().map((b) => ({ id: b.id, label: b.label, x: b.x - this.barOff - pl.x, w: b.w }));
@@ -819,10 +893,42 @@ class Display {
         // the HMI's status icons and its back arrow column (home button, back arrow) show through;
         // the column under them is covered, so the HMI's own bar doesn't show at the bottom left, nor the
         // mark the HMI draws above it when its bar is wider than the screen (eDrive's "Reset drive totals")
-        c.clip(sx, 0, W - sx, HMI.status.h).clear(0).noclip();
-        if (hx > 0) c.clip(0, 0, hx, HMI.colEnd - pl.y).clear(0).noclip();
+        if (!id8) {
+            c.clip(sx, 0, W - sx, geo.status.h).clear(0).noclip();
+            if (hx > 0) c.clip(0, 0, hx, geo.colEnd - pl.y).clear(0).noclip();
+        } else if (ID8_DIAG && !this.sheet) this._drawDiag(c, t);
         drawCredit(c, W - 18, FULL.headH + 17);
         r.xf(1, 0, 0).append(c).xf();
+    }
+
+    /**
+     * What the kit found on this head unit, for the first runs on an iDrive 8 car (one photo of the screen says
+     * which HMI, SDK, renderer and placement): short lines, in the log too (mgu.js) and in the page's left margin.
+     */
+    diagLines() {
+        const g = this.gpu, pl = this.place, x = g && g.xready;
+        const out = [
+            'hmi ' + (this.ui.hmi || '?') + ' geo ' + this.geo.id,
+            'socket ' + (g && g.path ? g.path.replace(/^\/run\//, '') : 'none'),
+            'dialect ' + (g && g.ready ? (g.native ? 'mgu-render/1' : 'upstream') : 'not ready'),
+            x ? 'xready modes ' + x.modes + ' caps ' + x.caps : 'xready ' + (g && g.info ? 'short' : 'none'),
+            x ? 'area ' + [x.appArea.x, x.appArea.y, x.appArea.w, x.appArea.h].join(',') : 'area default',
+            g && g.ready ? 'screen ' + g.screen.w + 'x' + g.screen.h + ' touch ' + (g.touch ? 1 : 0) : 'screen ?',
+            pl ? 'place ' + [pl.x, pl.y, pl.w, pl.h].join(',') : 'place none',
+            pl ? 'scale ' + pl.scale + ' off ' + pl.ox + ',' + pl.oy : '',
+            'own ' + (this.own() ? 1 : 0) + ' blocked ' + (this.blocked ? 1 : 0) + ' onScreen ' + (g && g.onScreen == null ? '?' : g && g.onScreen ? 1 : 0),
+            g ? 'ticks ' + g.seen.tick + ' touches ' + g.seen.touch + ' closed ' + g.seen.closed : '',
+        ];
+        let more = [];
+        try { more = this.diagExtra ? this.diagExtra() || [] : []; } catch (e) { more = ['diag: ' + e]; }
+        return out.concat(more).filter(Boolean);
+    }
+    _drawDiag(c, t) {
+        // the margin left of the page (about 330 px at 2880 wide): lines of at most 30 characters, long ones wrapped
+        const size = 19, step = 25, x = 12, rows = [];
+        this.diagLines().forEach((s) => { for (let i = 0, str = String(s); i < str.length && rows.length < 26; i += 30) rows.push((i ? '  ' : '') + str.slice(i, i + 30)); });
+        let y = FULL.headH + 30;
+        rows.forEach((s) => { c.text(s, x, y, size, t.dim, { font: 'label', literal: true }); y += step; });
     }
 
     /** A bar button's text changed (ui.text): its width, and so the bar's layout, follow. */
@@ -844,7 +950,7 @@ class Display {
     _scroll() {
         const f = this.buttons().find((b) => b.id === this.focused);
         if (!f) return;
-        const right = HMI.screen.w;
+        const right = HMI.screen.w;         // (iDrive 7 only: iDrive 8 has no HMI bar)
         if (f.x + f.w - this.barOff > right) this.barOff = f.x + f.w - right;
         if (f.x - this.barOff < HMI.btn.x) this.barOff = f.x - HMI.btn.x;
         if (this.barOff < 0) this.barOff = 0;
@@ -856,6 +962,7 @@ class Display {
      */
     barH() {
         if (this.screen && (this.screen.bar === false || this.screen.chrome === false)) return 0;
+        if (this.id8()) return 0;           // no HMI buttons to sit over: Settings is a tab, the rest is on the page
         // the kit's bar with nothing left on it (its buttons on the page, Settings a tab): no bar
         return this.ownable() && !this.buttons().length ? 0 : FULL.barH;
     }
@@ -873,6 +980,7 @@ class Display {
      * with the controller, turn the pages); they stay in the HMI's bar for the other paths.
      */
     buttons() {
+        if (this.id8()) return [];
         const own = this.ownable();
         if (this._btns && this._btnsOwn === own) return this._btns;
         this._btnsOwn = own;
@@ -892,4 +1000,4 @@ class Display {
     onLayout(fn) { this.layoutHandlers.push(fn); }
 }
 
-module.exports = { Display, HMI, FULL };
+module.exports = { Display, HMI, FULL, ID8 };

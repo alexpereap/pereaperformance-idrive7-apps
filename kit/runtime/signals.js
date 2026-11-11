@@ -13,6 +13,12 @@
  *       statusEngineSpeed2: (v) => rpm = v.actualValueRPMEngineCrankshaft,
  *   });
  *   sub.available  // true once the provider (the car) answers
+ *
+ * iDrive 8 (allowTyped, set by mgu.js there): the app manager does not generate those configs, and the
+ * apps that read the car there use the SDK's own typed proxies (someipBuilders.buildAndInitTypedProxy).
+ * So where the native module or an interface's config is missing, the proxy is the SDK's, wrapped to the
+ * shape the rest of this file uses (callMethod, subscribe, getValue, availability). backends() says which
+ * each interface got.
  */
 const fs = require('fs');
 const path = require('path');
@@ -27,6 +33,75 @@ const DIRS = [path.join(APP_ROOT, 'someipInterfaces'), path.join(__dirname, '..'
 // init run inline inside the app's promise chains next to the SDK's own SOME/IP
 // traffic. The SDK always calls them from a fresh setImmediate tick, one at a
 // time - do the same.
+let typedOk = false, typedLog = null;
+const backend = {};                          // interface -> 'raw' | 'typed' | 'none (why)'
+function allowTyped(on, log) { typedOk = !!on; typedLog = log || null; }
+function backends() { return Object.assign({}, backend); }
+
+/** An SDK typed proxy in the raw proxy's shape. Fields and broadcasts are members with subscribe / getValue; methods are functions. */
+function typedAdapter(px) {
+    const member = (name) => (px && px[name] !== undefined ? px[name] : null);
+    return {
+        typed: true, px,
+        init() { return Promise.resolve(this); },
+        callMethod(method, params) {
+            const fn = member(method);
+            if (typeof fn !== 'function') return Promise.reject(new Error('typed proxy has no method ' + method));
+            return Promise.resolve(fn.call(px, params || {}));
+        },
+        subscribe(o) {
+            const m = member(o.name);
+            if (!m || typeof m.subscribe !== 'function') return Promise.reject(new Error('typed proxy has no ' + o.name + ' to subscribe to'));
+            return Promise.resolve(m.subscribe(o.onReceive));
+        },
+        hasGetter(name) { const m = member(name); return !!(m && typeof m.getValue === 'function'); },
+        getValue(name) {
+            const m = member(name);
+            if (!m || typeof m.getValue !== 'function') return Promise.reject(new Error('typed proxy has no getter for ' + name));
+            return Promise.resolve(m.getValue());
+        },
+        setValue(name, value) {
+            const m = member(name);
+            if (!m || typeof m.setValue !== 'function') return Promise.reject(new Error('typed proxy has no setter for ' + name));
+            return Promise.resolve(m.setValue(value));
+        },
+        // (built and initialised means the provider answered)
+        subscribeToAvailability(fn) { setImmediate(() => fn(true)); return null; },
+        isAvailable() { return true; },
+        shutdown() { return Promise.resolve(); },
+    };
+}
+function typedProxy(iface, instance) {
+    let builders = null;
+    try { builders = require('oap-sdk').someipBuilders; } catch (e) { /* no SDK (host preview) */ }
+    if (!builders || typeof builders.buildAndInitTypedProxy !== 'function') return Promise.reject(new Error('this oap-sdk has no someipBuilders.buildAndInitTypedProxy'));
+    let timer;
+    const late = new Promise((res, rej) => { timer = setTimeout(() => rej(new Error('typed proxy: no answer after 15 s')), 15000); });
+    return Promise.race([Promise.resolve().then(() => builders.buildAndInitTypedProxy(iface, String(instance), { timeoutMs: 10000 })), late])
+        .then((px) => { clearTimeout(timer); return typedAdapter(px); }, (e) => { clearTimeout(timer); throw e; });
+}
+
+/** The proxy for an interface instance: { p, cfg } - the raw one from the app's config, else (allowTyped) the SDK's typed one. */
+function open(iface, instance) {
+    let cfg = null, why = '';
+    if (!someip) why = 'someip native module not available';
+    else { try { cfg = loadConfig(iface); } catch (e) { why = String(e && e.message || e); } }
+    if (cfg) {
+        return nativeTick(() => someip.buildProxy(cfg, String(instance)).then((px) => px.init().then(() => px)))
+            .then((p) => { backend[iface] = 'raw'; return { p, cfg }; });
+    }
+    if (!typedOk) { backend[iface] = 'none (' + why + ')'; return Promise.reject(new Error(why)); }
+    return typedProxy(iface, instance).then((p) => {
+        backend[iface] = 'typed';
+        if (typedLog) typedLog.info('signals backend: ' + iface + ' (' + instance + ') typed proxy of the SDK (' + why + ')');
+        return { p, cfg: null };
+    }, (e) => {
+        backend[iface] = 'none (' + why + '; typed: ' + (e && e.message || e) + ')';
+        if (typedLog) typedLog.warn('signals backend: ' + iface + ' (' + instance + ') none: ' + why + '; typed proxy: ' + (e && e.message || e));
+        throw new Error(why + '; typed proxy: ' + (e && e.message || e));
+    });
+}
+
 let chain = Promise.resolve();
 function nativeTick(fn) {
     const run = () => new Promise((resolve, reject) => setImmediate(() => { try { Promise.resolve(fn()).then(resolve, reject); } catch (e) { reject(e); } }));
@@ -52,15 +127,15 @@ function loadConfig(iface) {
  */
 async function watch(iface, instance, handlers, log, opts) {
     const res = { iface, available: false, proxy: null, error: null, shutdown: () => Promise.resolve() };
-    if (!someip) { res.error = 'someip native module not available'; return res; }
+    if (!someip && !typedOk) { res.error = 'someip native module not available'; return res; }
     try {
-        const cfg = loadConfig(iface);
-        const p = await nativeTick(() => someip.buildProxy(cfg, String(instance)).then((px) => px.init().then(() => px)));
+        const o = await open(iface, instance);
+        const cfg = o.cfg, p = o.p;
         res.proxy = p;
         res.shutdown = () => Promise.resolve().then(() => p.shutdown && p.shutdown()).catch(() => {});
         const fields = Object.keys(handlers || {});
         const fetchAll = () => fields.forEach((f) => {
-            if (cfg.fields && cfg.fields[f] && cfg.fields[f].getter) {
+            if (cfg ? cfg.fields && cfg.fields[f] && cfg.fields[f].getter : p.hasGetter && p.hasGetter(f)) {
                 p.getValue(f, 3000).then((v) => handlers[f](v)).catch(() => {});
             }
         });
@@ -85,9 +160,8 @@ async function watch(iface, instance, handlers, log, opts) {
 
 /** Call a method on an interface instance (e.g. UDS over InternalTasu). */
 async function proxy(iface, instance) {
-    if (!someip) throw new Error('someip native module not available');
-    const cfg = loadConfig(iface);
-    return nativeTick(() => someip.buildProxy(cfg, String(instance)).then((p) => p.init().then(() => p)));
+    if (!someip && !typedOk) throw new Error('someip native module not available');
+    return (await open(iface, instance)).p;
 }
 
 /** Call a method on a proxy from proxy(); params = the method's argument struct. */
@@ -116,4 +190,4 @@ function onAvailable(p, fn) {
         .then(() => { if (p.isAvailable && p.isAvailable()) fn(true); });
 }
 
-module.exports = { watch, proxy, call, set, on, onAvailable, loadConfig, hasNative: () => !!someip };
+module.exports = { watch, proxy, call, set, on, onAvailable, loadConfig, hasNative: () => !!someip, allowTyped, backends };

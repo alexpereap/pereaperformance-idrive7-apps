@@ -4,7 +4,7 @@
     "path": "apps/*",
     "manifest": "app.json",
     "icon": "icon.png",
-    "mguHmi": ["ID7"],
+    "mguHmi": ["ID7", "ID8"],
     "needs": ["renderer"],
     "build": {
       "python": "kit/tools/build.py",

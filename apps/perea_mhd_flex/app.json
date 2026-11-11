@@ -2,7 +2,7 @@
   "id": "perea_mhd_flex",
   "title": "Flex Fuel",
   "description": "Ethanol content (Active and CAN) read from an MHD-flashed DME over the car's own diagnostic link, the fuel in the tank (the DME's tank halves or the cluster), and how much ethanol to add to reach a target blend; the Active dial can also show the DME's own alcohol percentage (22 550D). Read-only; the addresses come from a profile per DME program family",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "E85",

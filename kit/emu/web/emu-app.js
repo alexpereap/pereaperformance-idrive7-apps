@@ -1,6 +1,6 @@
 // emu-app.js - the emulator page: the app's renderer stream drawn by the car's draw engine (gfx/mgu-gfx.js,
 // WebAssembly), mouse = touchscreen, keyboard / wheel = iDrive controller, the side panel. Protocol: kit/tools/emu.js.
-const W = 1920, H = 720;
+let W = 1920, H = 720;       // the centre display emulated: iDrive 7's, or iDrive 8's 2880 x 960 (hello.screen)
 const $ = (s) => document.querySelector(s);
 const el = (tag, attrs, ...kids) => {
   const e = document.createElement(tag);
@@ -89,6 +89,16 @@ function onText(m) {
   switch (m.t) {
   case 'hello':
     S.app = m.app;
+    // the head unit emulated: its screen size, and the HMI's chrome around the app (iDrive 8: a title strip and the climate bar)
+    if (m.screen && (m.screen.w !== W || m.screen.h !== H)) {
+      W = m.screen.w; H = m.screen.h;
+      if (gfxMod) newGfx(gfxApp);          // (a renderer made for the other size: a new one, on a canvas of this size)
+    }
+    stage.style.setProperty('--sw', W);
+    stage.style.aspectRatio = W + ' / ' + H;
+    stage.classList.toggle('id8', m.hmi === 'ID8');
+    stage.setAttribute('aria-label', 'Centre display, ' + W + ' x ' + H);
+    layout();
     $('#touchroute').checked = m.touch !== false;
     $('#app').replaceChildren(...m.apps.map((id) => el('option', { value: id, textContent: id, selected: id === m.app })));
     buildPicker(m.apps, m.titles || {});

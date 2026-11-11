@@ -38,7 +38,13 @@ body[data-dock="bottom"] #log { flex: 1 1 0px; min-height: 260px; max-height: no
 #stage.kbd-focus { box-shadow: 0 0 0 2px var(--accent); }
 #stage > * { position: absolute; }
 /* the HMI's own screen parts, in the screen's pixels: calc(var(--u) * n) is n px of the 1920 x 720 screen at any size */
-#stage { --u: calc(100cqw / 1920); --hmi-red: #ec5530; }
+#stage { --u: calc(100cqw / var(--sw, 1920)); --hmi-red: #ec5530; }
+/* iDrive 8 (emu.js --hmi id8): 2880 x 960. The HMI keeps a 76 px title strip (back arrow left, status right) and
+   the climate bar along the bottom (y 840..960); no back column. The app's layer is the area between them. */
+#stage.id8 #hmi-strip { height: calc(var(--u) * 76); }
+#stage.id8 #hmi-col, #stage.id8 .hmi-back-app, #stage.id8 .hmi-homecell, #stage.id8 .hmi-home, #stage.id8 .hmi-up { display: none; }
+#stage.id8::before { content: '\2039'; position: absolute; left: calc(var(--u) * 40); top: 0; height: calc(var(--u) * 76); line-height: calc(var(--u) * 70); font-size: calc(var(--u) * 64); color: #e4e4e4; z-index: 1; pointer-events: none; }
+#stage.id8::after { content: 'climate bar (the HMI\'s, always on)'; position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--u) * 120); display: flex; align-items: center; justify-content: center; background: linear-gradient(#ffffff26, #ffffff26) top / 100% calc(var(--u) * 2) no-repeat, #101114; color: #7d8086; font-size: calc(var(--u) * 30); letter-spacing: .04em; pointer-events: none; }
 #hmi { inset: 0; background: #000; }
 /* lines are 2 screen px drawn as gradients (a border of 2u rounds up to a whole CSS px on a small screen): the strip's at
    y 78..80, where the app's own header line covers it in the full layout; the standard layout and the picker show it */

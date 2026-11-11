@@ -13,6 +13,7 @@ node kit/tools/emu.js perea_mhd_flex     # then open http://localhost:8077
 | `--port 8080` | another port (default 8077); several emulators can run at the same time |
 | `--bg hmi.png` | a 1920 x 720 screenshot of your head unit's screen, shown instead of the HMI frame the page draws: it shows where the app leaves the screen see-through (the home and back column, the status corner). A photo of the screen does not line up |
 | `--no-touch` | start with touch routing off (see [Touch routing](#touch-routing)) |
+| `--hmi id8` | emulate iDrive 8: a 2880 x 960 screen, the app in the renderer's layer over the app area (0,76 2880x764, between the HMI's title strip and the climate bar), touch only, no HMI image, bar or settings screen. Default `id7` (1920 x 720) |
 
 The server answers this computer only (127.0.0.1), and only pages it serves itself, because it
 can rebuild and restart apps.

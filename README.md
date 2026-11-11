@@ -1,6 +1,6 @@
-# Perea Performance iDrive 7 apps
+# Perea Performance iDrive apps
 
-Apps for the BMW iDrive 7 head unit (MGU), installed with the
+Apps for the BMW MGU head unit, iDrive 7 and (experimental, see below) iDrive 8, installed with the
 [MGU Store](https://github.com/robertnisipeanu/mgu-store). They are built on the MGU App Kit
 from [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps), reduced here to what
 these apps use (see `THIRD_PARTY_NOTICES.md`). The Store builds each app on the head unit itself
@@ -16,6 +16,31 @@ from this repository: no BMW SDK leaves the car, and none is in this repository.
 
 > **Experimental.** Flex Fuel's addresses were captured on one MHD ROM; on any other it says
 > *ROM not supported* and sends no read. Use at your own risk, on your own car.
+
+## Head units
+
+| | iDrive 7 (ID7) | iDrive 8 (ID8) |
+|---|---|---|
+| Status | supported, in use | **experimental: not yet verified on an iDrive 8 car** |
+| Screen | drawn by a renderer, or by the HMI's own image (software path) | drawn by the Store's renderer only (the HMI has no image for it there) |
+| Operation | touch and the iDrive controller | touch only |
+| Settings | the kit's sheet, or the HMI's settings screen | the kit's sheet (the header's *Settings* tab) |
+| Layout | full screen or standard | the same page, scaled into the area between the HMI's title strip and the climate bar |
+
+One app serves both: its package carries a UI description for each HMI and the head unit takes its
+own. What a unit builds is for that unit (its own `oap-sdk`, the manifest and ACL tables of its app
+manager), which is why the Store builds the app on the head unit. The kit tells the HMI by a marker
+only the iDrive 8 description has and follows the lifecycle proven there by the MGU Store's own app
+and [IterioDev's apps](https://github.com/IterioDev/car-apps); everything it does differently on
+iDrive 8 sits behind that check, and the iDrive 7 output is compared with snapshots in the tests.
+
+**A first run on an iDrive 8 car.** While this is unverified the page shows, in its left margin,
+what the kit found (HMI, SDK, renderer socket and dialect, screen, app area, placement, SOME/IP
+backends). If the app does not draw, the HMI's own page says why. Please send a photo of the screen
+and, from the app's data folder (`/var/opt/public/oap/oap_<uid>/data/`), `perea_mhd_flex.log` and
+`perea_mhd_flex-diag.json`. Should the HMI refuse the app's page there (no tile, or
+`initialize: INVALID_PARAMETER` in the log), `"id8Labels": false` in the app's `app.json` builds the
+iDrive 8 description as a bare host state, without the note and marker labels.
 
 ## Install
 
@@ -38,6 +63,8 @@ git clone https://github.com/robertnisipeanu/mgu-store.git
 ```sh
 node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> /path/to/pereaperformance-idrive7-apps
 ```
+
+(On iDrive 8 an app installs at the head unit's next start unless the Store's live hook is on.)
 
 It copies this repository's tracked files to `<stick>/mgu-repo/<name>/`; the head unit builds
 the apps from there. Run it again after a change: the Store offers an app again only when its

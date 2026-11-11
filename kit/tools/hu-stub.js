@@ -14,6 +14,10 @@
  * presses (ui.rhmi.getByName), the settings sheet is wired as mgu.js wires it, settings persist in
  * dataDir, and the signals stub takes raw values from the emulator (hu.feed). Run as a script it is
  * emu.js's app process:  node kit/tools/hu-stub.js <dist/id> <dataDir>  (IPC messages: runLive below).
+ *
+ * MGU_EMU_HMI=ID8 (emu.js --hmi id8): the app as on iDrive 8 - the UI description there has only the host
+ * states, a note and a marker (no image, bar buttons or settings screen), so ui.hmi is 'ID8', Settings is
+ * the kit's sheet from the header's tab, and the "layout" and "renderer" settings are not offered.
  */
 const fs = require('fs');
 const path = require('path');
@@ -53,6 +57,8 @@ function headUnit(stage, o) {
         Object.assign(settings.values, o.sets);
     }
 
+    const id8 = hu.id8 = live && process.env.MGU_EMU_HMI === 'ID8';
+    if (id8) settings.schema.forEach((s) => { if (s.key === 'layout' || s.key === 'renderer') s.hidden = true; });   // (as mgu.js)
     let display = null;
     const softImage = (n, cv) => ui._image(n, cv);
     const ui = hu.ui = live ? liveUi(hu, () => display, softImage) : {
@@ -81,6 +87,7 @@ function headUnit(stage, o) {
     hu.widgetFn = null;
     const ctx = hu.ctx = {
         ui, settings, spec, dataDir: out, log, display,
+        hmi: id8 ? 'ID8' : 'ID7',
         canvas: (w, h) => display.canvas(w, h),
         onTab(fn) { display.onTab = fn; },
         // as kit/mgu.js: the kit's own screen (tabs, page buttons, sheets, scrolling) where the renderer has the app
@@ -145,8 +152,15 @@ function liveUi(hu, displayOf, softImage) {
         visH.forEach((fn) => { try { fn(n, on); } catch (e) { log.error(e); } });
     };
     const changed = () => hu.emit('screens', stack.slice());
+    // iDrive 8: the description has the app's canvas screens, the note and the marker, nothing else
+    const id8 = !!hu.id8;
+    const inId8 = (n) => n === 'KIT_NOTE' || n === 'KIT_HMI_ID8' || (hu.spec.screens || []).some((s) => s.kind === 'canvas' && (s.name === n || s.name + '_TITLE' === n));
+    let noteText = null;
     const ui = {
-        rhmi: { getByName: comp },
+        rhmi: { getByName: (n) => (id8 && !inId8(n) ? null : comp(n)) },
+        hmi: id8 ? 'ID8' : 'ID7', noImage: id8,
+        has: (n) => !id8 || inId8(n),
+        note: async (t) => { if (t !== noteText) { noteText = t; log.info('HMI page note: ' + (t || '(cleared)')); } },
         comp,
         image: (name, img) => displayOf().present(name, img, softImage),
         // the slim bar mirrors a bar button's text (as mgu.js Ui.text)
@@ -306,6 +320,7 @@ function runLive(stage, dataDir) {
     const focusables = () => {
         const sc = (spec.screens || []).find((s) => s.name === hu.stack[hu.stack.length - 1]);
         if (!sc) return [];
+        if (hu.id8) return [];              // no HMI buttons in the iDrive 8 description
         return sc.kind === 'canvas' ? (sc.buttons || []).map((b) => b[0]) : (sc.items || []).filter((i) => i[0] === 'button').map((i) => i[1]);
     };
     const focus = (id) => {
@@ -378,7 +393,10 @@ function runLive(stage, dataDir) {
                 frontRotaryEncoderPushButton: PUSH[e.pb] || 'KEINE_BETAETIGUNG', frontRotaryEncoderDeflection: DEFL[e.df] || 'MITTELSTELLUNG',
             }, false);
             if (!m.grabbed) hmiCcu({ frontRotaryEncoderOperation: e.knob, pb: e.pb, df: e.df });
-        } else if (m.t === 'click') ui.comp(m.id).emit('action', {});
+        } else if (m.t === 'click') {
+            // (iDrive 8: the panel's Settings is the header's tab - the kit's own opener)
+            if (hu.id8 && m.id === 'BTN_SETTINGS') { if (hu.display.onSettings) hu.display.onSettings(); } else ui.comp(m.id).emit('action', {});
+        }
         else if (m.t === 'tap') hmiTap(Number(m.x), Number(m.y));
         else if (m.t === 'reconnect') reconnect();
         else if (m.t === 'hmi') {

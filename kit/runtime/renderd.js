@@ -67,6 +67,9 @@ class RenderClient extends EventEmitter {
         this.claimed = null;         // the claims sent on this connection (JSON), null: none yet
         this.native = false;         // this connection speaks mgu-render/1 (X_READY came)
         this.info = null;            // X_READY: { touch, controller, frontGate }
+        this.xready = null;          // X_READY in full (52 bytes): { version, modes, caps, embed, appArea, pixmapSide, refresh }
+        this.readyWords = null;      // READY's words as they came (diagnostics)
+        this.seen = { tick: 0, touch: 0, closed: 0 };
         this.onScreen = null;        // X_STATE: the renderer shows us (null: not told)
     }
 
@@ -94,7 +97,7 @@ class RenderClient extends EventEmitter {
             this._reset();
             this.inbuf = Buffer.alloc(0);   // (a message cut off with the last connection)
             s.setNoDelay && s.setNoDelay(true);
-            this.native = false; this.info = null; this.onScreen = null;
+            this.native = false; this.info = null; this.onScreen = null; this.xready = null;
             this.claimed = null;
             this._write(msg(M.HELLO, this._hello()));
             // upstream renderers take these before READY; they are sent again once READY came
@@ -196,10 +199,20 @@ class RenderClient extends EventEmitter {
                 const caps = p.readUInt32LE(8);
                 this.native = true;
                 this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4) };
+                // the full form (mgu-render's PROTOCOL.md): the embed box and the app area of this head unit's
+                // screen (iDrive 7: 108,82 1790x638; iDrive 8: 0,76 2880x764), the pixmap limit, the refresh rate
+                if (p.length >= 52) {
+                    const box = (o) => ({ x: p.readInt32LE(o), y: p.readInt32LE(o + 4), w: p.readInt32LE(o + 8), h: p.readInt32LE(o + 12) });
+                    this.xready = { version: p.readUInt32LE(0), modes: p.readUInt32LE(4), caps, embed: box(12), appArea: box(28), pixmapSide: p.readUInt32LE(44), refresh: p.readUInt32LE(48) };
+                }
             } else if (type === E.READY) {
                 this.ready = true; this.errLogged = false;
                 this.screen = { w: p.readUInt32LE(4), h: p.readUInt32LE(8) };
                 this.touch = p.length >= 16 && p.readUInt32LE(12) !== 0;
+                this.readyWords = [];
+                for (let i = 0; i + 4 <= p.length && i < 32; i += 4) this.readyWords.push(p.readUInt32LE(i));
+                this.log.info('diag: renderd socket=' + this.path + ' dialect=' + (this.native ? 'mgu-render/1' : 'upstream') +
+                    ' X_READY=' + JSON.stringify(this.xready || this.info) + ' READY=' + JSON.stringify(this.readyWords));
                 this.log.info('renderd: connected, screen ' + this.screen.w + 'x' + this.screen.h +
                     (this.native ? ', mgu-render/1 ' + JSON.stringify(this.info) : this.opts.native ? ', upstream dialect (no mgu-render/1)' : ''));
                 if (this.native) this._write(this._u32msg(X.MODE, [X_MODE_LAYER]));
@@ -221,11 +234,14 @@ class RenderClient extends EventEmitter {
                     frontRotaryEncoderPushButton: p[3], frontRotaryEncoderDeflection: p[4],
                 });
             } else if (type === E.TICK) {
+                if (!this.seen.tick++) this.log.info('diag: renderd first TICK (the renderer took a frame)');
                 this.waiting = false;
                 this.emit('tick', p.readUInt32LE(0), p.readUInt32LE(4));
             } else if ((this.claimed || this.native) && type === TOUCH && p.length >= 12) {
+                if (!this.seen.touch++) this.log.info('diag: renderd first TOUCH phase=' + p.readUInt32LE(0) + ' at ' + Math.round(p.readFloatLE(4)) + ',' + Math.round(p.readFloatLE(8)));
                 this.emit('touch', p.readUInt32LE(0), p.readFloatLE(4), p.readFloatLE(8));
             } else if ((this.claimed || this.native) && type === CLOSED) {
+                if (this.seen.closed++ < 3) this.log.info('diag: renderd CLOSED (a touch outside the claims hid the app)');
                 this.visible = false;
                 this.emit('closed');
             } else if (!this.native && type === E.CCU && p.length >= 5) {

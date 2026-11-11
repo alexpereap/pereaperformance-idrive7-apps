@@ -2,7 +2,8 @@
 
 // Kit runtime (display.js, renderd.js, mgu.js Settings) against a stand-in mgu-render on a Unix socket: the
 // unchanged-frame skip and its keepalive, a sheet that throws, X_STATE front flips, a reconnect after a cut
-// message, the theme kept on a fresh install. No SDK, renderer or car needed:
+// message, the theme kept on a fresh install; and iDrive 8: the 2880 x 960 screen's app area, the page scaled into
+// it, the kit running the screen by touch alone, Settings as the header's tab. No SDK, renderer or car needed:
 //   node kit/tools/test_runtime.js
 
 const assert = require('assert');
@@ -253,6 +254,108 @@ test('a new scale keeps the uploads (the renderer keeps them), a new size sends 
         assert(!g.sent.layer.has(4), 'layers drawn at the old scale');
         g.place(Object.assign({}, pl, { w: pl.w - 8 }));
         assert.deepStrictEqual([g.sent.atlas.size, g.sent.ramp.size, g.sent.image.size], [0, 0, 0], 'a new size');
+    } finally { t.end(); }
+});
+
+/* ---------------- iDrive 8: 2880 x 960, the renderer's layer over the app area ---------------- */
+const ready8 = (c) => { c.send(X_READY, u32(1, 1, 1 | 8, 0, 0, 0, 0, 0, 76, 2880, 764, 2048, 60000)); c.send(READY, u32(4, 2880, 960, 1)); };   // touch, no controller gate
+/** A Display as on iDrive 8: the UI description there has no bar button, settings screen or image (ui.rhmi finds none). */
+async function setup8(o) {
+    o = o || {};
+    let conn = null;
+    onConn = (c) => { conn = c; (o.ready || ready8)(c); };
+    const log = { errors: [], warns: [], info() {}, warn: (...a) => log.warns.push(a.join(' ')), debug() {}, error: (...a) => log.errors.push(a) };
+    const vis = new Set(['MAIN']), visH = [];
+    const ui = {
+        rhmi: { getByName: () => null }, hmi: o.hmi, noImage: true, close() {}, notes: [],
+        visible: () => { throw new Error('an HMI component asked for on iDrive 8'); },
+        onVisible: (fn) => visH.push(fn), isVisible: (n) => vis.has(n),
+    };
+    const spec = { id: 'test', title: 'Test', screens: [{ name: 'MAIN', kind: 'canvas', buttons: [['BTN_SETTINGS', 'Settings']] }] };
+    // (with the HMI known, the "renderer" and "layout" settings do not apply there: set against it on purpose)
+    const d = new Display(ui, log, spec, { get: (k) => (!o.hmi ? undefined : k === 'renderer' ? 'software' : k === 'layout' ? 'standard' : undefined), onChange() {} }, () => themes.theme());
+    assert(await waitFor(() => conn && d.active()), 'display on the renderer');
+    return { d, ui, log, c: conn, end() { d.closeSheet(); d.gpu.close(); clearInterval(d.keepTimer); } };
+}
+
+test('iDrive 8: the page scaled into the app area the renderer reports, the kit runs the screen by touch', async () => {
+    const t = await setup8({ hmi: 'ID8' }), d = t.d;
+    try {
+        assert(await waitFor(() => d.own()), 'the kit runs the screen');
+        const pl = d.place;
+        assert.deepStrictEqual([pl.x, pl.y, pl.w, pl.h, pl.scale, pl.ox, pl.oy, pl.full], [0, 76, 2880, 764, 1.394, 325, 33, true]);
+        assert.deepStrictEqual(d.gpu.xready.appArea, { x: 0, y: 76, w: 2880, h: 764 });
+        assert.strictEqual(d.geo.id, 'ID8');
+        assert.strictEqual(d.geo.areaFrom, 'X_READY');
+        assert.strictEqual(d.layout(), 'full', 'no standard layout there, whatever the setting says');
+        assert.strictEqual(d.barH(), 0, 'no button bar');
+        assert.deepStrictEqual(d.buttons(), []);
+        assert(!d.gpu.grabbing, 'the controller is not grabbed (no gate in Hmi8)');
+        // the page keeps its 1600 x 520 shape: its left and right edges are inside the area, the header above it
+        const left = pl.ox + 12 * pl.scale, right = pl.ox + 1588 * pl.scale, top = pl.oy + 38 * pl.scale, bottom = pl.oy + 520 * pl.scale;
+        assert(left > 300 && right < 2880 - 300 && top >= 80 && bottom <= 764, 'page window ' + [left, right, top, bottom].map(Math.round).join(','));
+        // a frame: the header's tabs are the app's page and Settings; the claims cover the area (header and page)
+        let softs = 0;
+        const r = d.canvas(1600, 520);
+        const G = require('../runtime/gauges');
+        r.fillRect(100, 100, 400, 200, '#ff0000');
+        G.frame(r, themes.theme(), ['Flex Fuel'], 0, []);
+        await d.present('MAIN', r, () => { softs++; return Promise.resolve(); });
+        assert.strictEqual(softs, 0, 'nothing drawn in the HMI (it has no image there)');
+        const tl = d._tabList();
+        assert.deepStrictEqual([tl.tabs, tl.settings], [['Flex Fuel', 'Settings'], 1]);
+        const claims = JSON.parse(d.gpu.claimed);
+        assert.strictEqual(claims.length, 2);
+        const scr = claims.map((q) => ({ x: Math.round(q.x * pl.scale + pl.ox), y: Math.round(q.y * pl.scale + pl.oy), w: Math.round(q.w * pl.scale), h: Math.round(q.h * pl.scale) }));
+        assert.deepStrictEqual(scr, [{ x: 0, y: 0, w: 2880, h: 80 }, { x: 0, y: 80, w: 2880, h: 684 }], 'claims in the layer\'s pixels');
+        // a tap on the Settings tab: no HMI button there - the kit's own opener (mgu.js wireSettings sets it)
+        let opened = 0;
+        d.onSettings = () => { opened++; return null; };
+        const tab = d.tabs.find((q) => q.i === 1);
+        assert(tab, 'the Settings tab has a rect');
+        t.c.send(TOUCH, touch(1, tab.x + tab.w / 2, tab.y + tab.h / 2)); t.c.send(TOUCH, touch(3, tab.x + tab.w / 2, tab.y + tab.h / 2));
+        assert(await waitFor(() => opened === 1), 'the Settings tab opens the settings');
+        // the settings sheet is drawn over the page
+        assert(d.openSheet({ settings: true, draw: (rr) => { rr.fillRect(0, 0, 50, 50, '#0000ff'); return []; }, move() {} }), 'a sheet can open');
+        assert.strictEqual(d._tabList().sel, 1, 'Settings is the lit tab while its sheet shows');
+        d.closeSheet();
+        // the diagnostics for a first run on the car
+        const lines = d.diagLines().join('\n');
+        assert(/hmi ID8 geo ID8/.test(lines) && /dialect mgu-render\/1/.test(lines) && /area 0,76,2880,764/.test(lines) && /screen 2880x960 touch 1/.test(lines) && /scale 1.394 off 325,33/.test(lines), lines);
+        assert.deepStrictEqual(t.log.errors, []);
+    } finally { t.end(); }
+});
+
+test('iDrive 8 without the UI description saying so: the 2880 x 960 screen is enough; a renderer that answers READY alone works too', async () => {
+    let t = await setup8({});
+    try {
+        assert(await waitFor(() => t.d.own()), 'the kit runs the screen');
+        assert.strictEqual(t.d.place.scale, 1.394);
+    } finally { t.end(); }
+    // (IterioDev's renderer: no mgu-render/1, touch routed) the same placement from the default area
+    t = await setup8({ hmi: 'ID8', ready: (c) => c.send(READY, u32(4, 2880, 960, 1)) });
+    try {
+        assert(await waitFor(() => t.d.own()), 'the kit runs the screen on the upstream dialect');
+        assert.deepStrictEqual([t.d.place.x, t.d.place.y, t.d.place.w, t.d.place.h, t.d.place.scale], [0, 76, 2880, 764, 1.394]);
+        assert.strictEqual(t.d.geo.areaFrom, 'default');
+    } finally { t.end(); }
+    // no touch routing: shown, but the kit does not run the screen (nothing could be pressed)
+    t = await setup8({ hmi: 'ID8', ready: (c) => { c.send(X_READY, u32(1, 1, 8, 0, 0, 0, 0, 0, 76, 2880, 764, 2048, 60000)); c.send(READY, u32(4, 2880, 960, 0)); } });
+    try {
+        assert(t.d.active() && !t.d.own());
+        assert.strictEqual(t.d.place.full, true);
+    } finally { t.end(); }
+});
+
+test('iDrive 7 is as it was: 1920 x 720 placement, the bar and the HMI button', async () => {
+    const t = await setup(), d = t.d;
+    try {
+        assert.strictEqual(d.geo.id, undefined, 'the iDrive 7 geometry');
+        // (the page right of the back column: scale floor(min((1920 - 84) / 1576, (720 - 80) / 482) * 1000) / 1000 = 1.164,
+        // ox 84 + round((1836 - 1576 * 1.164) / 2 - 12 * 1.164) = 71: the numbers main gives)
+        assert.deepStrictEqual([d.place.x, d.place.y, d.place.w, d.place.h, d.place.scale, d.place.ox, d.place.full], [0, 0, 1920, 720, 1.164, 71, true]);
+        assert(d.gpu.grabbing, 'the controller is held where the gate is');
+        assert.strictEqual(d.id8(), false);
     } finally { t.end(); }
 });
 

@@ -12,6 +12,13 @@ Produces in dist/:
 The RHMI layout (application.xml + uiDescription.json) is GENERATED from the
 "screens" + "settings" in app.json, using only widget templates that BMW's own
 apps use on this firmware (see reference/rhmi-widget-cells.md).
+
+One app serves iDrive 7 and iDrive 8: the package carries a UI description for each
+(rhmiData/uiDescriptions/ID7 and /ID8; the head unit's HMI takes its own). What differs
+per head unit is what the unit builds with: its own oap-sdk, and the SOME/IP manifest and
+ACL tables of its app manager (target_hmi(): --hmi, else the unit it runs on). The iDrive 8
+description is a host state only (a title, a note, a marker): there the screen is drawn by
+the Store's renderer and Settings is the kit's own sheet.
 """
 import gzip, json, os, re, shutil, sys, tarfile, uuid
 from xml.sax.saxutils import escape
@@ -73,6 +80,59 @@ PLATFORM_SERVICES = {
     "de.bmw.infotainment.telematic.oap.AppStatus": {"instances": ["${userId}"]},
     "de.bmw.infotainment.telematic.oap.TriggersControl": {"instances": ["${userId}"]},
 }
+
+# iDrive 8 (MainApp-21): its app manager refuses a manifest that names an interface the unit lacks, and
+# nothing strips one there. So this is the set IterioDev's dual apps declare, which run on iDrive 8
+# (car-apps iteriodev_seats manifest.json): both generations of the HMI interfaces side by side, and none
+# of the iDrive 7 only ones above (Lifecycle, UserAccount, PrivacySettings, TriggersControl).
+PLATFORM_PROXIES_ID8 = {
+    "de.bmw.infotainment.certification.Certification": "*",
+    "de.bmw.infotainment.hmi.entrypoint.EntryPoint": "*",
+    "de.bmw.infotainment.hmi.entrypoint.EntryPointManager": "*",
+    "de.bmw.infotainment.hmi.entrypoint2.EntryPoint2": "*",
+    "de.bmw.infotainment.hmi.entrypoint2.EntryPointManager2": "*",
+    "de.bmw.infotainment.hmi.hmicontext.HMIContext": {"instances": ["HMI_CID"], "attributes": {"currentDisplayLanguage": "rs"}},
+    "de.bmw.infotainment.hmi.hmicontext2.HMIContext2": {"instances": ["1"], "attributes": {"currentDisplayLanguage": "rs"}},
+    "de.bmw.infotainment.hmi.remote.RemoteHmi": "*",
+    "de.bmw.infotainment.hmi.remote.RemoteHmiApplication": "*",
+    "de.bmw.infotainment.hmi.remote2.RemoteHmi2": "*",
+    "de.bmw.infotainment.hmi.remote2.RemoteHmiApplication2": "*",
+    "de.bmw.infotainment.hmi.resourcemanagement.ResourceBundle": "*",
+    "de.bmw.infotainment.hmi.resourcemanagement.ResourceManager": "*",
+    "de.bmw.infotainment.hmi.resourcemanagement.StringBundle": "*",
+    "de.bmw.infotainment.hmi.resourcemanagement2.ResourceBundle2": "*",
+    "de.bmw.infotainment.hmi.resourcemanagement2.ResourceManager2": "*",
+    "de.bmw.infotainment.hmi.resourcemanagement2.StringBundle2": "*",
+    "de.bmw.infotainment.hmi.usecasemanagement.UseCaseContext": {"instances": "*", "broadcasts": ["notify"], "methods": ["setObservedContextKeys"]},
+    "de.bmw.infotainment.hmi.usecasemanagement.UseCaseInstance": "*",
+    "de.bmw.infotainment.hmi.usecasemanagement.UseCaseProvider": "*",
+    "de.bmw.infotainment.hmi.usecasemanagement.UseCaseRegistry": {
+        "instances": "*", "attributes": {"useCaseIds": "r"}, "broadcasts": ["registryUpdate"], "methods": ["getProvider"]},
+    "de.bmw.infotainment.personalization.SessionManager": "*",
+    "de.bmw.infotainment.personalization.UserAccountManager": "*",
+    "de.bmw.infotainment.telematic.oap.AppBookmarks": {"instances": ["${userId}"], "methods": ["registerBookmark"]},
+    "de.bmw.infotainment.telematic.oap.AppStatus": "*",
+    "de.bmw.infotainment.telematic.oap.PrivateEntryPoint": {
+        "instances": ["${userId}"], "methods": ["registerEntryPoint", "unregisterEntryPoint", "setSelected", "setAvailability"]},
+    "de.bmw.infotainment.telematic.oap.PrivateEntryPoint2": {"instances": ["${userId}"], "methods": ["genericMethod"]},
+    "de.bmw.infotainment.telematic.oap.WakeUpOnDemand": {"instances": ["${userId}"], "methods": ["registerParticipant", "unregisterParticipant"]},
+    "de.bmw.infotainment.telematic.oap.WodControl": {"instances": "${userId}", "methods": ["offerService", "stopOfferingService"]},
+    "de.bmw.infotainment.telematic.oapcontroller.OAPController": "*",
+    "de.bmw.infotainment.telematic.provisioning.Provisioning": {
+        "instances": "1", "broadcasts": ["provisioningDataJSON"], "methods": ["getValueJSON", "setFilterForProvisioningData"]},
+    "de.bmw.infotainment.vehicle.Vehicle": "*",
+    "de.bmw.infrastructure.EnvironmentalInformation": "*",
+    "org.genivi.nodestatemanager.Consumer": {
+        "instances": "NSMConsumer", "broadcasts": ["ShutdownEvents", "SessionStateChanged"],
+        "methods": ["LifecycleRequestComplete", "RegisterShutdownClient", "UnRegisterShutdownClient"]},
+}
+PLATFORM_SERVICES_ID8 = {
+    "de.bmw.infotainment.telematic.oap.AppStatus": {"instances": ["${userId}"]},
+}
+HMIS = ('ID7', 'ID8')
+# iDrive 8 description: the note the HMI's page shows while no renderer draws the screen (and the first
+# on-car diagnostics), and a hidden label only this description has, by which the app knows its HMI
+ID8_NOTE, ID8_MARKER = 'KIT_NOTE', 'KIT_HMI_ID8'
 
 # property ids (RhmiConstants): Enabled=1 Visible=2 Focusable=3 ParentState=9
 WIDGETS = {
@@ -299,9 +359,112 @@ def build_ui(spec, language='en'):
     return '\n'.join(xml) + '\n', ui, strings, state_ids
 
 
-def manifest_for(spec):
-    proxies = dict(PLATFORM_PROXIES)
+def build_ui_id8(spec):
+    """screens -> (application.xml, uiDescription.json, state ids) for iDrive 8's HMI (Hmi8).
+
+    Each canvas screen is a host state and no more: Hmi8 has no graphic widget for the app's picture (the
+    Store's renderer draws it, in its own layer over the page), no state may have a parent (a description
+    with one is refused: initialize INVALID_PARAMETER), and Settings is the kit's sheet, so there is no
+    button bar and no settings state. Widgets and shape as the MGU Store's own iDrive 8 description
+    (LT_State_Wide_List, a title, LT_ScrollLabel). The title reuses the iDrive 7 description's string.
+
+    app.json "id8Labels": false leaves the two labels out: the bare host state IterioDev's apps use (a title
+    only), should Hmi8 refuse the description with them. The app then knows its HMI by the missing graphic
+    component, and has no line on the HMI's page to say why nothing is drawn."""
+    app = spec['id']
+    with_labels = spec.get('id8Labels', True) is not False
+    nid = Ids()
+    xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<application>']
+    ui = {'schemaVersion': '1.3.0', 'containers': {}}
+    state_ids = {}
+    first = True
+    for scr in spec.get('screens', []):
+        if scr.get('kind', 'list') != 'canvas':
+            print('  iDrive 8: screen %s (%s) left out - only canvas screens are drawn there' % (scr['name'], scr.get('kind', 'list')))
+            continue
+        cid, tid, lid = nid(), nid(), nid()
+        state_ids[scr['name']] = cid
+        comps = {str(tid): {'type': 'title', 'name': scr['name'] + '_TITLE', 'properties': {'Visible': {'value': 1, 'type': 'UInt'}},
+                            'rows': [{'Text': {'value': sid(app, scr['name'] + '_TITLE'), 'type': 'StringId'}}]}}
+        x = [f'    <container id="{cid}" type="state" widget="LT_State_Wide_List">',
+             f'        <layoutGroup id="{nid()}" name="Titlebar">',
+             f'            <component id="{tid}" type="title">',
+             '                <property id="2" value="1"/>',
+             '            </component>',
+             '        </layoutGroup>',
+             f'        <layoutGroup id="{nid()}" name="List">',
+             '            <property id="3" value="1"/>']
+        labels = [(lid, scr['name'] + '_NOTE' if not first else ID8_NOTE, 1)] if with_labels else []
+        if first and with_labels:
+            labels.append((nid(), ID8_MARKER, 0))
+        for (bid, name, visible) in labels:
+            x += [f'            <component id="{bid}" type="label" widget="LT_ScrollLabel">',
+                  f'                <property id="2" value="{visible}"/>',
+                  '                <property id="3" value="0"/>',
+                  '            </component>']
+            comps[str(bid)] = {'type': 'label', 'name': name,
+                               'properties': {'Visible': {'value': visible, 'type': 'UInt'}, 'Focusable': {'value': 0, 'type': 'UInt'}},
+                               'rows': [{'Text': {'value': '', 'type': 'Text'}}]}
+        x += ['        </layoutGroup>', '    </container>']
+        xml += x
+        ui['containers'][str(cid)] = {'type': 'state', 'name': scr['name'], 'components': comps}
+        first = False
+    xml.append('</application>')
+    return '\n'.join(xml) + '\n', ui, state_ids
+
+
+def target_hmi(asked=None, sdk_dir=None):
+    """(hmi, why): the head unit this build is for. The app manager's manifest and ACL tables differ per
+    unit (and the oap-sdk in the package is the building unit's own), so a build is for one of them:
+    --hmi; else the HMI process running here (Hmi8 / HmiMain3D, as the Store tells the units apart); else
+    the app manager installed; else the oap-sdk's version (24.x iDrive 7, 50.x iDrive 8); else iDrive 7."""
+    if asked:
+        return asked, '--hmi'
+    try:
+        for pid in os.listdir('/proc'):
+            if not pid.isdigit():
+                continue
+            try:
+                comm = open('/proc/%s/comm' % pid).read().strip()
+            except OSError:
+                continue
+            if comm == 'Hmi8':
+                return 'ID8', 'the HMI process Hmi8 runs here'
+            if comm == 'HmiMain3D':
+                return 'ID7', 'the HMI process HmiMain3D runs here'
+    except OSError:
+        pass
+    m7, m21 = os.path.isdir('/usr/lib/oap-mainapp'), os.path.isdir('/usr/lib/oap-mainapp21')
+    if m21 and not m7:
+        return 'ID8', '/usr/lib/oap-mainapp21 without /usr/lib/oap-mainapp'
+    if m7 and not m21:
+        return 'ID7', '/usr/lib/oap-mainapp without /usr/lib/oap-mainapp21'
+    try:
+        ver = json.load(open(os.path.join(sdk_dir or SDK, 'package.json'), encoding='utf-8')).get('version', '')
+        major = int(re.match(r'\d+', ver).group(0))
+        if major >= 40:
+            return 'ID8', 'oap-sdk ' + ver
+        return 'ID7', 'oap-sdk ' + ver
+    except (OSError, ValueError, AttributeError):
+        pass
+    return 'ID7', 'no head unit here (the default)'
+
+
+def sdk_version():
+    try:
+        return json.load(open(os.path.join(SDK, 'package.json'), encoding='utf-8')).get('version', '')
+    except (OSError, ValueError):
+        return ''
+
+
+def manifest_for(spec, hmi='ID7'):
+    proxies = dict(PLATFORM_PROXIES_ID8 if hmi == 'ID8' else PLATFORM_PROXIES)
     for iface, fields in spec.get('signals', {}).items():
+        if hmi == 'ID8':
+            # whole interfaces, as the apps that read the car on iDrive 8 declare them (nothing trims the
+            # manifest against the unit's catalog there)
+            proxies[iface] = '*'
+            continue
         inst = fields.pop('_instances', '1') if isinstance(fields, dict) else '1'
         entry = {'instances': inst}
         if isinstance(fields, dict):
@@ -314,7 +477,7 @@ def manifest_for(spec):
         else:
             entry = '*'
         proxies[iface] = entry
-    return {'proxies': proxies, 'services': PLATFORM_SERVICES}
+    return {'proxies': proxies, 'services': PLATFORM_SERVICES_ID8 if hmi == 'ID8' else PLATFORM_SERVICES}
 
 
 def make_icon(spec, out):
@@ -398,8 +561,9 @@ def build_start_widget(spec, app_id, icon_src, out, pkg_out=None):
     return {'component': comp, 'layout': ui['containers']['500']['components'][str(WIDGET_COMPONENT_ID)]['cells']['Widget']['value']}
 
 
-def build(app_id, language='en', preview_only=False):
+def build(app_id, language='en', preview_only=False, hmi=None):
     language = normalize_language(language)
+    hmi, hmi_why = target_hmi(hmi)
     if not preview_only and not all(os.path.isfile(os.path.join(SDK, name)) for name in ('index.js', 'package.json')):
         raise SystemExit('BMW oap-sdk is missing. Extract it from your own head unit with kit/tools/extract_sdk.js, '
                          'or use --preview-only for an offline preview (no installable package).')
@@ -417,9 +581,10 @@ def build(app_id, language='en', preview_only=False):
     os.makedirs(os.path.join(src, 'config'))
     os.makedirs(os.path.join(src, 'node_modules', 'oap-sdk'))
 
-    manifest = manifest_for(json.loads(json.dumps(spec)))
+    manifest = manifest_for(json.loads(json.dumps(spec)), hmi)
     xml, uidesc, strings, state_ids = build_ui(spec, language)
     unicode_resources(uidesc, strings, language)
+    xml8, uidesc8, state_ids8 = build_ui_id8(spec)
     for lang, tbl in spec.get('strings', {}).items():
         strings.update(tbl)
 
@@ -435,9 +600,13 @@ def build(app_id, language='en', preview_only=False):
             'userLoginRequired': False, 'backgroundPriority': 200, 'someipManifest': 'manifest.json',
         },
     }
+    if hmi == 'ID8':
+        # MainApp-21 only repacks a built package: what the deploy tool adds on iDrive 7 goes in here
+        pkg['mguLocalOnly'] = True
+        pkg['mguHmi'] = ['ID8']
     json.dump(pkg, open(os.path.join(src, 'package.json'), 'w', encoding='utf-8', newline='\n'), indent=2)
     json.dump(manifest, open(os.path.join(src, 'manifest.json'), 'w', encoding='utf-8', newline='\n'), indent=2)
-    shutil.copy(os.path.join(KIT, 'platform', 'permissions.json'), os.path.join(src, 'permissions.json'))
+    shutil.copy(os.path.join(KIT, 'platform', 'permissions.id8.json' if hmi == 'ID8' else 'permissions.json'), os.path.join(src, 'permissions.json'))
     json.dump({'name': app_id, 'version': ver, 'lockfileVersion': 1}, open(os.path.join(src, 'npm-shrinkwrap.json'), 'w', encoding='utf-8', newline='\n'))
     # the SDK merges this over its own config. Newer SDKs (27.x, extracted from a newer donor app) build the app's
     # screens and entry point only with these on, and some donors ship them off: the app then has no screens and
@@ -489,8 +658,10 @@ def build(app_id, language='en', preview_only=False):
             body = file.read()
         with open(entry, 'wb') as file:
             file.write(comment.encode('utf-8') + body)
-    rt_spec = {k: spec.get(k) for k in ('id', 'title', 'version', 'screens', 'settings', 'config', 'startWidget')}
+    rt_spec = {k: spec.get(k) for k in ('id', 'title', 'version', 'screens', 'settings', 'config', 'startWidget', 'id8Labels')}
     rt_spec['stateIds'] = state_ids
+    # what this package was built for (mgu.js compares it with the HMI and SDK it finds itself on)
+    rt_spec['build'] = {'hmi': hmi, 'why': hmi_why, 'sdk': sdk_version()}
     json.dump(rt_spec, open(os.path.join(src, 'javascript', 'kit', 'app-spec.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     locale = {'language': language, 'strings': load_locale(language)}
     if credit(language):
@@ -499,6 +670,7 @@ def build(app_id, language='en', preview_only=False):
     if preview_only:
         print('%s %s: offline preview in %s (NO SDK, NOT INSTALLABLE)' % (app_id, ver, stage))
         return
+    print('  build target: %s (%s%s)' % (hmi, hmi_why, ', oap-sdk ' + sdk_version() if sdk_version() else ''))
     shutil.copy(os.path.join(SDK, 'index.js'), os.path.join(src, 'node_modules', 'oap-sdk', 'index.js'))
     shutil.copy(os.path.join(SDK, 'package.json'), os.path.join(src, 'node_modules', 'oap-sdk', 'package.json'))
 
@@ -520,16 +692,20 @@ def build(app_id, language='en', preview_only=False):
     }
     pr = os.path.join(src, 'rhmiData')
     os.makedirs(os.path.join(pr, 'uiDescriptions', 'ID7'))
+    os.makedirs(os.path.join(pr, 'uiDescriptions', 'ID8'))
     os.makedirs(os.path.join(pr, 'variantGroups', 'Common', 'texts'))
     os.makedirs(os.path.join(pr, 'variantGroups', 'Common', 'images'))
     pj = json.loads(json.dumps(app_json))
-    pj['application']['uiDescriptions'] = [{'applicationFilePath': './uiDescriptions/ID7/application.xml',
-                                            'uiDescriptionFilePath': './uiDescriptions/ID7/uiDescription.json', 'hmi': ['ID7']}]
+    # a UI description per head unit (the HMI takes its own), one set of texts and images for both
+    pj['application']['uiDescriptions'] = [{'applicationFilePath': './uiDescriptions/%s/application.xml' % h,
+                                            'uiDescriptionFilePath': './uiDescriptions/%s/uiDescription.json' % h, 'hmi': [h]} for h in HMIS]
     pj['application']['variantGroups'] = [{'stringsPath': './variantGroups/Common/texts',
-                                           'resourcesPath': './variantGroups/Common/images', 'hmi': ['ID7'], 'brands': ['BMW']}]
+                                           'resourcesPath': './variantGroups/Common/images', 'hmi': list(HMIS), 'brands': ['BMW']}]
     json.dump(pj, open(os.path.join(pr, 'application.json'), 'w', encoding='utf-8', newline='\n'), indent=2)
     open(os.path.join(pr, 'uiDescriptions', 'ID7', 'application.xml'), 'w', encoding='utf-8', newline='\n').write(xml)
     json.dump(uidesc, open(os.path.join(pr, 'uiDescriptions', 'ID7', 'uiDescription.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
+    open(os.path.join(pr, 'uiDescriptions', 'ID8', 'application.xml'), 'w', encoding='utf-8', newline='\n').write(xml8)
+    json.dump(uidesc8, open(os.path.join(pr, 'uiDescriptions', 'ID8', 'uiDescription.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     for lang in LANGS:
         json.dump(strings, open(os.path.join(pr, 'variantGroups', 'Common', 'texts', lang + '.json'), 'w', encoding='utf-8', newline='\n'), ensure_ascii=False)
     make_icon(spec, os.path.join(pr, 'variantGroups', 'Common', 'images', icon))
@@ -592,11 +768,12 @@ def main():
     parser.add_argument('--language', type=normalize_language, choices=languages(), default='en',
                         help='UI language; Korean also accepts ko-KR, ko-kr and ko_KR')
     parser.add_argument('--preview-only', action='store_true', help='stage an offline preview without BMW SDK or installable archives')
+    parser.add_argument('--hmi', choices=HMIS, help='the head unit to build for (default: the one this runs on, else ID7)')
     parser.add_argument('apps', nargs='*')
     args = parser.parse_args()
     ids = args.apps or sorted(d for d in os.listdir(APPS) if os.path.exists(os.path.join(APPS, d, 'app.json')))
     for i in ids:
-        build(i, args.language, preview_only=args.preview_only)
+        build(i, args.language, preview_only=args.preview_only, hmi=args.hmi)
 
 
 if __name__ == '__main__':

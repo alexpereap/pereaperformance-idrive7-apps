@@ -17,10 +17,25 @@
  * kit/tools/build.py, which generates the RHMI layout from it). Every screen
  * is a real RHMI state rendered by the head unit's own HMI; graphics are PNGs
  * the app draws (canvas.js) and hands to the HMI as resources.
+ *
+ * iDrive 7 and iDrive 8: one app for both. The package carries a UI description for each HMI
+ * (build.py); the one iDrive 8's HMI loads has a marker component (KIT_HMI_ID8), by which the kit
+ * knows where it runs (ctx.hmi: 'ID7' | 'ID8'). On iDrive 8 the HMI gives the app only a host
+ * state: the screen is drawn by the Store's renderer alone (display.js), Settings is the kit's
+ * sheet, and the lifecycle follows what is proven there (the MGU Store's own app and IterioDev's:
+ * ACTIVE only on a foreground start and before initialized(), the entry point initialised and
+ * enabled by the app, no visibility reports). Everything iDrive 8 does differently sits behind
+ * hmi === 'ID8'; the iDrive 7 path is as it was.
  */
 const fs = require('fs');
 const path = require('path');
-const { OnlineApp, logging } = require('oap-sdk');
+let sdk;
+try { sdk = require('oap-sdk'); } catch (e) {
+    // (before the app's log exists: cwd of an OAP app is its data folder)
+    try { fs.appendFileSync(path.join(process.cwd(), 'kit-start.log'), new Date().toISOString() + ' FATAL require(oap-sdk): ' + (e && e.stack || e) + '\n'); } catch (e2) { /* read-only */ }
+    throw e;
+}
+const { OnlineApp, logging } = sdk;
 const themes = require('./themes');
 const { Display } = require('./display');
 const { HmiText } = require('./hmi-text');
@@ -75,6 +90,40 @@ const log = {};
         if (lvl !== 'debug' || process.env.MGU_DEBUG) fileLog(lvl.toUpperCase(), msg);
     };
 });
+
+/* ---------------- diagnostics: what the kit found on this head unit ----------------
+ * For the first runs on a head unit the kit was not tried on (iDrive 8): 'diag:' lines in the app's log,
+ * and the same facts as one JSON file beside it (<id>-diag.json), rewritten as they come. */
+const DIAG = { app: SPEC.id, version: SPEC.version, build: SPEC.build || null, node: process.version, events: {} };
+const DIAG_FILE = path.join(DATA_DIR, SPEC.id + '-diag.json');
+let diagTimer = null;
+function diagSave() {
+    if (diagTimer) return;
+    diagTimer = setTimeout(() => {
+        diagTimer = null;
+        try { fs.writeFileSync(DIAG_FILE, JSON.stringify(DIAG, null, 1)); } catch (e) { /* data dir not writable */ }
+    }, 500);
+    if (diagTimer.unref) diagTimer.unref();
+}
+/** Note a fact (key: value) in the log and the diag file. */
+function diag(key, value) {
+    DIAG[key] = value;
+    log.info('diag: ' + key + '=' + (typeof value === 'object' ? JSON.stringify(value) : String(value)));
+    diagSave();
+}
+/** Note an event's raw payload: the first 40 of each kind (their shape is what a first run has to show). */
+function diagEvent(kind, payload) {
+    const list = DIAG.events[kind] || (DIAG.events[kind] = []);
+    if (list.length >= 40) return;
+    let text;
+    try { text = JSON.stringify(payload); } catch (e) { text = String(payload); }
+    list.push({ t: Date.now(), v: text === undefined ? String(payload) : text.slice(0, 400) });
+    log.info('diag: event ' + kind + ' ' + (text === undefined ? String(payload) : text.slice(0, 400)));
+    diagSave();
+}
+const isTrue = (raw) => raw === true || raw === 'true' || raw === 1 || raw === '1';
+// start reasons that put the app on screen (the MGU Store's own app, IterioDev's host)
+const FOREGROUND_REASONS = ['ENTRY_POINT', 'LUM', 'BOOKMARK', 'START_WIDGET', 'TRIGGER_HMI', 'SPEECH_COMMAND'];
 
 // crashes otherwise only reach DLT; keep the reason next to the app's log
 process.on('uncaughtException', (e) => { fileLog('FATAL', 'uncaught: ' + (e && e.stack || e)); process.exit(1); });
@@ -162,6 +211,22 @@ class Ui {
         this._focusHandlers = [];
         this.timing = { png: 0, push: 0 };    // ms spent encoding / handing images to the HMI
         this._cnText = new HmiText();
+        this.hmi = 'ID7';                     // 'ID8': the iDrive 8 UI description is the one loaded (runInner)
+        this.noImage = false;                 // iDrive 8: no graphic component - the renderer draws, or nothing
+        this._note = null;
+    }
+    /** The UI description loaded has a component of this name (no warning: the two HMIs' descriptions differ). */
+    has(name) { return !!(this.rhmi && this.rhmi.getByName(name)); }
+    /**
+     * iDrive 8: the line on the HMI's own page (under the renderer's layer): why nothing is drawn, e.g. no
+     * renderer installed. Plain ASCII; '' hides it. A description without the note (iDrive 7) ignores it.
+     */
+    note(text) {
+        const c = this.rhmi && this.rhmi.getByName('KIT_NOTE');
+        const s = String(text || '').replace(/[^\x20-\x7e]/g, ' ').slice(0, 240);
+        if (!c || s === this._note) return Promise.resolve();
+        this._note = s;
+        return this._try('note', Promise.resolve(c.setValue(0, 'Text', s, 'Text')).then(() => c.setProperty('Visible', s ? 1 : 0, 'UInt')));
     }
     comp(name) {
         const c = this.rhmi && this.rhmi.getByName(name);
@@ -247,6 +312,7 @@ class Ui {
         return this._image(name, img, cell);
     }
     _image(name, img, cell) {
+        if (this.noImage) return Promise.resolve();      // iDrive 8: the HMI has no image for it
         const st = this._img[name] || (this._img[name] = { n: 0, live: [], busy: null, next: null });
         // coalesce: if a push is in flight, remember only the newest frame
         if (st.busy) { st.next = img; return st.busy; }
@@ -448,8 +514,25 @@ class Widget {
 function wireSettings(ctx) {
     const { ui, settings } = ctx;
     const schema = settings.schema;
+    if (!schema.length) return;
+    // the settings sheet drawn over the page by the renderer (sheet.js), where the kit runs the screen
+    const openSheet = (after) => {
+        const d = ctx.display;
+        if (d.sheet && d.sheet.settings) { d.closeSheet(); return true; }
+        const sh = listSheet(settings, null, { version: SPEC.version + (ui.hmi === 'ID8' ? ' (iDrive 8)' : '') });
+        sh.settings = true;
+        if (after) sh.onClose = after;
+        return d.openSheet(sh);
+    };
     // the settings screen, or an app's own menu screen that shows them ("settings": true)
-    if (!schema.length || !schema.some((s) => ui.comp('SET_' + s.key.toUpperCase()))) return;
+    const has = (n) => (ui.has ? ui.has(n) : !!ui.comp(n));
+    if (!schema.some((s) => has('SET_' + s.key.toUpperCase()))) {
+        // iDrive 8: no settings screen in the HMI's description - the sheet alone, from the header's Settings tab
+        if (ui.hmi === 'ID8' && ctx.display) {
+            ctx.display.onSettings = () => { if (!openSheet() && ctx.log) ctx.log.warn('settings: the sheet needs the renderer showing the app'); return null; };
+        }
+        return;
+    }
     // choice / number settings are drop-downs (kit/tools/build.py): their rows are the values in this order
     const values = (s) => (s.type === 'choice' ? (s.options || []).map((o) => o[0]) : s.type === 'number' ? s.steps || [] : null);
     const refresh = () => Promise.all(schema.map((s) => {
@@ -477,12 +560,7 @@ function wireSettings(ctx) {
     settings.onChange(() => { if (!ctx.display.sheet) refresh(); });
     if (ui.comp('BTN_SETTINGS')) {
         ui.onClick('BTN_SETTINGS', () => {
-            const d = ctx.display;
-            if (d.sheet && d.sheet.settings) { d.closeSheet(); return null; }
-            const sh = listSheet(settings, null, { version: SPEC.version });
-            sh.settings = true;
-            sh.onClose = () => refresh();
-            if (d.openSheet(sh)) return null;
+            if (openSheet(() => refresh())) return null;
             return refresh().then(() => ui.open('SETTINGS'));
         });
     }
@@ -507,6 +585,11 @@ async function run(impl) {
 async function runInner(impl) {
     const app = new OnlineApp();
     log.info('starting ' + SPEC.id + ' ' + SPEC.version);
+    // which head unit: before the SDK has started, by what the package was built for (build.py) and the SDK's
+    // version (24.x iDrive 7, 50.x iDrive 8); settled after start() by the UI description the HMI loaded
+    const sdkVersion = (() => { try { return String(require('oap-sdk/package.json').version || ''); } catch (e) { return ''; } })();
+    const built = SPEC.build || {};
+    let hmi = built.hmi || (parseInt(sdkVersion, 10) >= 40 ? 'ID8' : 'ID7');
     // interfaces this unit lacks, which the installer left out (app.json "_optional")
     try {
         const missing = JSON.parse(fs.readFileSync(path.join(__dirname, 'missing-interfaces.json'), 'utf8'));
@@ -517,7 +600,8 @@ async function runInner(impl) {
     // report HMI visibility, and exit when MainApp asks us to shut down
     const active = () => Promise.resolve().then(() => app.registerActive())
         .then(() => log.info('registered active')).catch((e) => log.warn('registerActive: ' + e));
-    app.on('appStatusProxyReady', active);
+    // (iDrive 8: ACTIVE only on a foreground start, right before initialized() - below)
+    app.on('appStatusProxyReady', () => { if (hmi !== 'ID8') active(); });
     app.on('shutdown', () => { log.info('shutdown requested by MainApp'); setTimeout(() => process.exit(0), 200); });
     // home-screen widget: MainApp hands it over (now or whenever one is placed)
     const widget = new Widget(SPEC.startWidget);
@@ -526,7 +610,14 @@ async function runInner(impl) {
         app.on('startWidgetInitialized', (rhmiApp) => { log.info('widget initialized'); widget.attach(rhmiApp); });
     }
     await app.start();
-    active();
+    if (hmi !== 'ID8') active();
+    if (!app.rhmiApplication && hmi === 'ID8') {
+        // a start for no screen (a background start reason): done, as the Store's and IterioDev's apps do
+        diag('start', { hmi, sdk: sdkVersion, rhmi: false, reason: String(app.startReason) });
+        log.warn('no RHMI application for this start (reason ' + app.startReason + '): initialized without a screen');
+        try { await app.initialized(); } catch (e) { log.warn('initialized: ' + e); }
+        return;
+    }
     if (!app.rhmiApplication) {
         // The SDK did not create the app's screens: nothing can be shown. Stay up (idle) rather than throw: a
         // crash makes CorruptAppsHandler wipe the app's data, and a second one uninstalls it (issue #39).
@@ -537,11 +628,44 @@ async function runInner(impl) {
         return;
     }
     const ui = new Ui(app);
+    // the UI description the HMI loaded: only iDrive 8's has the marker, and only iDrive 7's has the graphic
+    // component of the first canvas screen (a description built with "id8Labels": false has neither)
+    const marker = ui.has('KIT_HMI_ID8');
+    const canvas0 = (SPEC.screens || []).find((s) => s.kind === 'canvas');
+    const graphic = !!canvas0 && ui.has(canvas0.graphic || canvas0.name + '_GFX');
+    const shape = ['isInitialized', 'appStatusService', 'packageJson', '_initialized', '_appStatusService', '_packageJson'].filter((k) => k in app);
+    const before = hmi;
+    hmi = marker || (canvas0 && !graphic) ? 'ID8' : 'ID7';
+    ui.hmi = hmi; ui.noImage = hmi === 'ID8';
+    const methods = (o, names) => names.filter((n) => o && typeof o[n] === 'function');
+    diag('start', {
+        hmi, marker, graphic, assumed: before, built, sdk: sdkVersion, shape, reason: String(app.startReason),
+        app: methods(app, ['registerActive', 'registerInactive', 'registerHmiVisible', 'unregisterHmiVisible', 'getEntryPoints', 'getVisibilityData',
+            'getLastExecutedEntryPointUuid', 'destroyBundles', 'initialized']).concat(app.appDescription ? ['appDescription'] : []),
+        rhmi: methods(app.rhmiApplication, ['getByName', 'getById', 'openState', 'closeState', 'mapEntryState', 'openEntryState', 'getResourceBundle']),
+        comps: ['MAIN', 'MAIN_TITLE', 'KIT_NOTE', 'KIT_HMI_ID8', 'MAIN_GFX', 'BTN_SETTINGS', 'SETTINGS'].filter((n) => ui.has(n)),
+        someipInterfaces: (() => { try { return fs.readdirSync(path.join(APP_ROOT, 'someipInterfaces')).length; } catch (e) { return 'none'; } })(),
+    });
+    if (before !== hmi) log.warn('this package was taken to be for ' + before + ' (built: ' + JSON.stringify(built) + ', oap-sdk ' + sdkVersion + ') but the HMI loaded the ' + hmi + ' UI description');
+    if (hmi === 'ID8' && !(app.isInitialized !== undefined || app.appStatusService !== undefined) && parseInt(sdkVersion, 10) < 40) {
+        log.warn('iDrive 8 UI description with an oap-sdk that looks like iDrive 7\'s (' + sdkVersion + '): the package was built on another head unit?');
+    }
     const settings = new Settings(SPEC.settings);
+    if (hmi === 'ID8') {
+        // no "standard" layout and no software path there (display.js); typed SOME/IP proxies where the raw ones are not set up
+        settings.schema.forEach((s) => { if (s.key === 'layout' || s.key === 'renderer') s.hidden = true; });
+        require('./signals').allowTyped(true, log);
+    }
     const display = new Display(ui, log, SPEC, settings, () => themes.theme(settings.get('theme')));
     ui.display = display;
+    display.diagExtra = () => {
+        const sig = require('./signals').backends();
+        return ['sdk ' + (sdkVersion || '?') + ' node ' + process.version, 'built ' + (built.hmi || '?') + ' marker ' + (marker ? 1 : 0), 'start ' + String(app.startReason)]
+            .concat(Object.keys(sig).map((i) => i.split('.').pop() + ': ' + sig[i]));
+    };
     const ctx = {
         app, ui, settings, log, spec: SPEC, dataDir: DATA_DIR, display, widget,
+        hmi,                                    // 'ID7' | 'ID8': the head unit's HMI
         signals: require('./signals'),
         theme: () => themes.theme(settings.get('theme')),
         /**
@@ -637,15 +761,39 @@ async function runInner(impl) {
 
     // visibility of our states (pauses rendering when the user leaves); the HMI's settings screen too (the
     // drawn screen gives way to it: display.js)
-    const tracked = (SPEC.screens || []).concat(SPEC.settings && SPEC.settings.length ? [{ name: 'SETTINGS' }] : []);
+    const id8 = hmi === 'ID8';
+    // (iDrive 8: only the states its description has - no settings state there)
+    const tracked = (SPEC.screens || []).concat(SPEC.settings && SPEC.settings.length ? [{ name: 'SETTINGS' }] : [])
+        .filter((s) => !id8 || ui.has(s.name));
     tracked.forEach((s) => {
         const st = ui.comp(s.name);
+        if (id8) {
+            // (the events' booleans may come as 'true' / 1 there; their raw shape goes to the diagnostics)
+            if (st && st.on) st.on('visible', (ev) => { diagEvent('visible ' + s.name, ev); if (isTrue(ev && ev.visible)) ui._setVisible(s.name, true); });
+            if (st && st.on) st.on('focus', (ev) => { diagEvent('focus ' + s.name, ev); const f = ev && ev.focus; ui._setFocus(s.name, !(f === false || f === 'false' || f === 0 || f === '0')); });
+            return;
+        }
         if (st && st.on) st.on('visible', (ev) => ui._setVisible(s.name, !!(ev && ev.visible)));
         // a popup over the screen (options, warnings, calls) takes its focus: the display hides
         // the GPU overlay meanwhile, so the popup is never covered
         if (st && st.on) st.on('focus', (ev) => ui._setFocus(s.name, !(ev && ev.focus === false)));
     });
+    if (id8) {
+        app.on('changeVisibility', (data) => {
+            diagEvent('changeVisibility', data);
+            if (data && data.visible === false) tracked.forEach((s) => ui._setVisible(s.name, false));
+        });
+    }
     ui.rhmi.on('applicationStackChanged', (stack) => {
+        if (id8) {
+            // in front while the stack has ROOT_APP (an empty one says nothing); no visibility reports to the SDK there
+            diagEvent('applicationStackChanged', stack);
+            const keys = stack && typeof stack === 'object' ? Object.keys(stack) : [];
+            if (!keys.length) return;
+            const front = Object.prototype.hasOwnProperty.call(stack, 'ROOT_APP');
+            tracked.forEach((s) => { ui._setVisible(s.name, front); if (front) ui._setFocus(s.name, true); });
+            return;
+        }
         const shown = stack && Object.keys(stack).length > 0 && ('ROOT_APP' in stack);
         Promise.resolve().then(() => (shown ? app.registerHmiVisible() : app.unregisterHmiVisible()))
             .catch((e) => log.warn('hmi visible: ' + e));
@@ -669,9 +817,31 @@ async function runInner(impl) {
     } catch (e) { log.warn('no rhmiData/application.json: ' + e); }
     const mainState = ui.comp(mainName);
     const mapped = {};
-    await Promise.all(entryUuids.map((uuid) => ui.rhmi.mapEntryState(uuid, mainState)
-        .then(() => { mapped[uuid] = true; log.info('mapped entry ' + uuid + ' -> ' + mainName); })
-        .catch((e) => log.error('map entry state', e))));
+    if (id8) {
+        // as the Store's own app and IterioDev's host: the state's resources, then the entry point the manager
+        // hands over is initialised, mapped to the state, given its text and icon, and enabled
+        const say = (what, p) => Promise.resolve().then(p).then(() => log.info('diag: entry points: ' + what + ' ok'), (e) => { log.warn('diag: entry points: ' + what + ' failed: ' + (e && e.message || e)); });
+        const within = (p, ms) => Promise.race([p, new Promise((res) => { const t = setTimeout(res, ms); if (t.unref) t.unref(); })]);
+        await within(say('updateResources ' + mainName, () => (mainState && mainState.updateResources ? mainState.updateResources() : null)), 4000);
+        const described = (app.appDescription && app.appDescription.application && app.appDescription.application.entryPoints) || [];
+        if (described.length) entryUuids = described.map((d) => d.uuid);
+        const eps = typeof app.getEntryPoints === 'function' ? app.getEntryPoints() || [] : [];
+        const ours = eps.find((ep) => { try { return entryUuids.indexOf(ep.getDescription().uuid) >= 0; } catch (e) { return false; } });
+        log.info('diag: entry points: described ' + JSON.stringify(entryUuids) + ', handed over ' + eps.length + (ours ? '' : ' (none of ours)'));
+        if (ours) {
+            const d = ours.getDescription();
+            await within(say('init', () => ours.init())
+                .then(() => say('mapEntryState ' + mainName, () => ui.rhmi.mapEntryState(d.uuid, mainState).then(() => { mapped[d.uuid] = true; })))
+                .then(() => say('text and icon', () => Promise.resolve(ours.entryPoint && ours.entryPoint.setText(d.textId)).then(() => (d.icon && ours.entryPoint ? ours.entryPoint.setIcon(d.icon) : null))))
+                .then(() => say('ENABLED', () => ours.setAvailability('ENABLED'))), 8000);
+        } else {
+            await within(Promise.all(entryUuids.map((uuid) => say('mapEntryState ' + mainName, () => ui.rhmi.mapEntryState(uuid, mainState).then(() => { mapped[uuid] = true; })))), 8000);
+        }
+    } else {
+        await Promise.all(entryUuids.map((uuid) => ui.rhmi.mapEntryState(uuid, mainState)
+            .then(() => { mapped[uuid] = true; log.info('mapped entry ' + uuid + ' -> ' + mainName); })
+            .catch((e) => log.error('map entry state', e))));
+    }
     let opening = null;
     // tries: right after a tap started the app the HMI can still refuse the state (INVALID_UUID /
     // INVALID_COMPONENTID) - then it is asked again, 0.8 s apart, instead of needing a second tap
@@ -697,6 +867,7 @@ async function runInner(impl) {
     widget.onTap(() => { if (entryUuids[0]) openEntry(entryUuids[0]); });
     app.on('entryPointExecute', (uuid, reason, name) => {
         log.info('entry point ' + name + ' (' + reason + ')');
+        if (id8) diagEvent('entryPointExecute', { uuid, reason, name });
         openEntry(uuid);
     });
 
@@ -714,18 +885,46 @@ async function runInner(impl) {
     // and lists render empty
     // (menu screens only: doing it on a canvas screen before its first image
     // makes every later createResourceHandles fail with INVALID_VALUE)
-    await step('screen resources', Promise.all((SPEC.screens || []).filter((s) => s.kind !== 'canvas')
-        .concat(SPEC.settings && SPEC.settings.length ? [{ name: 'SETTINGS' }] : [])
-        .map((s) => ui.comp(s.name)).filter((st) => st && st.updateResources)
-        .map((st) => st.updateResources())), 4000);
+    // (iDrive 8: its one state's resources went out before the entry point, above)
+    if (!id8) {
+        await step('screen resources', Promise.all((SPEC.screens || []).filter((s) => s.kind !== 'canvas')
+            .concat(SPEC.settings && SPEC.settings.length ? [{ name: 'SETTINGS' }] : [])
+            .map((s) => ui.comp(s.name)).filter((st) => st && st.updateResources)
+            .map((st) => st.updateResources())), 4000);
+    }
     await step('settings screen', wireSettings(ctx), 3000);
     if (impl && impl.start) await step('app start', Promise.resolve().then(() => impl.start(ctx)), 5000);
+    let foreground = false;
+    if (id8) {
+        // ACTIVE before initialized() and only on a start that puts the app on screen
+        let vis = null;
+        try { vis = typeof app.getVisibilityData === 'function' ? app.getVisibilityData() : null; } catch (e) { /* not this SDK */ }
+        const reason = String((vis && vis.reason) || app.startReason);
+        foreground = FOREGROUND_REASONS.indexOf(reason) >= 0;
+        diag('lifecycle', { reason, visibilityData: vis || null, foreground });
+        if (foreground) await active();
+    }
     await app.initialized();
     log.info('initialized (start reason ' + app.startReason + ')');
     // launched by a tile tap / bookmark: the execute event came before we
     // listened, so open the screen ourselves (M Laptimer does the same)
     const lastEntry = app.getLastExecutedEntryPointUuid && app.getLastExecutedEntryPointUuid();
-    if (lastEntry && ['ENTRY_POINT', 'BOOKMARK', 'LUM'].indexOf(String(app.startReason)) >= 0) openEntry(lastEntry, 6);
+    if (id8) {
+        if (lastEntry && foreground) openEntry(lastEntry, 6);
+        // the HMI's own page says why nothing is drawn while no renderer shows the app (3 s after the start, then as it changes)
+        const why = () => {
+            const g = display.gpu;
+            if (!g || !g.ready) return 'no renderer running (install the MGU Store renderer)';
+            if (!g.touch) return 'the renderer does not route touch: the app cannot be operated';
+            if (display.blocked) return 'the renderer does not have this app in front';
+            return '';
+        };
+        const noteTimer = setInterval(() => {
+            const w = why();
+            ui.note(w ? SPEC.title + ' is drawn by the MGU Store renderer on iDrive 8: ' + w + '. [' + display.diagLines().slice(0, 6).join(' | ') + ']' : '');
+        }, Number(process.env.MGU_NOTE_MS) || 3000);
+        if (noteTimer.unref) noteTimer.unref();
+    } else if (lastEntry && ['ENTRY_POINT', 'BOOKMARK', 'LUM'].indexOf(String(app.startReason)) >= 0) openEntry(lastEntry, 6);
     process.on('unhandledRejection', (e) => log.error('unhandled', e));
     return ctx;
 }
