@@ -24,7 +24,19 @@ function family(name) {
     return fam;
 }
 
-/** Smallest baked size >= requested (downscaling looks better), else largest. */
+/** Every character of the text has a glyph in this baked size. */
+function covers(f, text) {
+    for (const ch of text) if (f.glyphs[ch.codePointAt(0)] === undefined) return false;
+    return true;
+}
+
+/**
+ * Smallest baked size >= requested (downscaling looks better), else largest. The big sizes of a family may
+ * hold fewer glyphs (num: digits and a few letters from 64 px up, the whole set at 40 px only): where the size
+ * picked lacks a character of the text, the nearest size that has them all is taken instead (the smallest at or
+ * over the request, else the largest under it), so "76.1 gal (288.0 L)" at 42 px is drawn whole from the 40 px
+ * atlas rather than with holes from the 64 px one. A text no size covers keeps the size picked first.
+ */
 function get(name, size, text) {
     // Shared supplemental atlases avoid duplicating glyphs in every numeric size.
     if (text && /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff]/.test(text)) name = 'korean';
@@ -35,6 +47,15 @@ function get(name, size, text) {
     let best = null;
     for (const f of fam) if (f.size >= size && (!best || f.size < best.size)) best = f;
     if (!best) best = fam[fam.length - 1];
+    if (text && fam.length > 1 && !covers(best, text)) {
+        let full = null;
+        for (const f of fam) {
+            if (!covers(f, text)) continue;
+            if (!full) full = f;
+            else if (f.size >= size) { if (full.size < size || f.size < full.size) full = f; } else if (full.size < size && f.size > full.size) full = f;
+        }
+        if (full) best = full;
+    }
     if (!best.alpha) best.alpha = zlib.inflateSync(Buffer.from(best._alpha, 'base64'));
     return best;
 }

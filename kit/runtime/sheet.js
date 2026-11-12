@@ -138,6 +138,7 @@ function listSheet(settings, title, opts) {
         },
         draw(r, t) {
             r.clear(t.bg);
+            G.backdrop(r, t);             // (iDrive 8: the page's grey and flag from edge to edge; nothing elsewhere)
             const rows = this.rows();
             // a switch that hid settings below the focus ("when"): the focus stays on the list
             if (!this.open) this.focus = Math.min(this.focus, rows.length - 1);
@@ -213,6 +214,7 @@ function cardSheet(spec) {
         focus: 0, controller: false, onClose: null,
         draw(r, t) {
             r.clear(t.bg);
+            G.backdrop(r, t);             // (iDrive 8: the page's grey and flag from edge to edge; nothing elsewhere)
             const targets = [];
             const actions = get('actions') || [];
             this.focus = Math.max(-1, Math.min(this.focus, actions.length - 1));

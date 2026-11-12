@@ -21,11 +21,11 @@ from this repository: no BMW SDK leaves the car, and none is in this repository.
 
 | | iDrive 7 (ID7) | iDrive 8 (ID8) |
 |---|---|---|
-| Status | supported, in use | **experimental: not yet verified on an iDrive 8 car** |
+| Status | supported, in use | runs on a car (first seen 2026-11-11: oap-sdk 50.23.1, the Store's renderer); still young |
 | Screen | drawn by a renderer, or by the HMI's own image (software path) | drawn by the Store's renderer only (the HMI has no image for it there) |
 | Operation | touch and the iDrive controller | touch only |
 | Settings | the kit's sheet, or the HMI's settings screen | the kit's sheet (the header's *Settings* tab) |
-| Layout | full screen or standard | the same page, scaled into the area between the HMI's title strip and the climate bar |
+| Layout | full screen or standard | its own look: the same page centred on a grey backdrop that fills the screen between the HMI's title strip and the climate bar, a wide M flag at the top left, the tabs without the app's name |
 
 One app serves both: its package carries a UI description for each HMI and the head unit takes its
 own. What a unit builds is for that unit (its own `oap-sdk`, the manifest and ACL tables of its app
@@ -34,11 +34,11 @@ only the iDrive 8 description has and follows the lifecycle proven there by the 
 and [IterioDev's apps](https://github.com/IterioDev/car-apps); everything it does differently on
 iDrive 8 sits behind that check, and the iDrive 7 output is compared with snapshots in the tests.
 
-**A first run on an iDrive 8 car.** While this is unverified the page shows, in its left margin,
-what the kit found (HMI, SDK, renderer socket and dialect, screen, app area, placement, SOME/IP
-backends). If the app does not draw, the HMI's own page says why. Please send a photo of the screen
-and, from the app's data folder (`/var/opt/public/oap/oap_<uid>/data/`), `perea_mhd_flex.log` and
-`perea_mhd_flex-diag.json`. Should the HMI refuse the app's page there (no tile, or
+**If something is off on an iDrive 8 car.** Settings → **Show diagnostics** (offered there only)
+draws, in the page's left margin, what the kit found (HMI, SDK, renderer socket and dialect, screen,
+app area, placement, SOME/IP backends). If the app does not draw at all, the HMI's own page says
+why. Please send a photo of the screen and, from the app's data folder
+(`/var/opt/public/oap/oap_<uid>/data/`), `perea_mhd_flex.log` and `perea_mhd_flex-diag.json`. Should the HMI refuse the app's page there (no tile, or
 `initialize: INVALID_PARAMETER` in the log), `"id8Labels": false` in the app's `app.json` builds the
 iDrive 8 description as a bare host state, without the note and marker labels.
 

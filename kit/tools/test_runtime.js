@@ -273,9 +273,11 @@ async function setup8(o) {
     };
     const spec = { id: 'test', title: 'Test', screens: [{ name: 'MAIN', kind: 'canvas', buttons: [['BTN_SETTINGS', 'Settings']] }] };
     // (with the HMI known, the "renderer" and "layout" settings do not apply there: set against it on purpose)
-    const d = new Display(ui, log, spec, { get: (k) => (!o.hmi ? undefined : k === 'renderer' ? 'software' : k === 'layout' ? 'standard' : undefined), onChange() {} }, () => themes.theme());
+    const vals = !o.hmi ? {} : { renderer: 'software', layout: 'standard' }, changeH = [];
+    const settings = { get: (k) => vals[k], onChange: (fn) => changeH.push(fn), set: (k, v) => { vals[k] = v; changeH.forEach((fn) => fn(k, v)); } };
+    const d = new Display(ui, log, spec, settings, () => themes.theme());
     assert(await waitFor(() => conn && d.active()), 'display on the renderer');
-    return { d, ui, log, c: conn, end() { d.closeSheet(); d.gpu.close(); clearInterval(d.keepTimer); } };
+    return { d, ui, log, settings, c: conn, end() { d.closeSheet(); d.gpu.close(); clearInterval(d.keepTimer); } };
 }
 
 test('iDrive 8: the page scaled into the app area the renderer reports, the kit runs the screen by touch', async () => {
@@ -319,7 +321,31 @@ test('iDrive 8: the page scaled into the app area the renderer reports, the kit 
         assert(d.openSheet({ settings: true, draw: (rr) => { rr.fillRect(0, 0, 50, 50, '#0000ff'); return []; }, move() {} }), 'a sheet can open');
         assert.strictEqual(d._tabList().sel, 1, 'Settings is the lit tab while its sheet shows');
         d.closeSheet();
-        // the diagnostics for a first run on the car
+        // iDrive 8's own look: the frame knows what the layer shows under the header, in the page's px
+        const v = r.view;
+        assert(v && Math.abs(v.x0 + 233.1) < 0.2 && Math.abs(v.x1 - 1832.9) < 0.2 && Math.abs(v.y0 - 33.7) < 0.2 && Math.abs(v.y1 - 524.4) < 0.2, 'view ' + JSON.stringify(v));
+        assert(Math.abs(v.x0 * pl.scale + pl.ox) < 0.01 && Math.abs(v.x1 * pl.scale + pl.ox - 2880) < 0.01 && Math.abs(v.y0 * pl.scale + pl.oy - 80) < 0.01 && Math.abs(v.y1 * pl.scale + pl.oy - 764) < 0.01, 'the view is the layer under the header');
+        // the backdrop: the grey over all of it, the wide flag at its top left, the line to the right edge
+        const { Recorder: Rec, play: playRec } = require('../runtime/record');
+        const { Canvas: Cv } = require('../runtime/canvas');
+        const b = new Rec(1600, 520);
+        assert.strictEqual(G.backdrop(b, themes.theme()), false, 'no view (iDrive 7, software): nothing drawn');
+        assert.strictEqual(b.words().length, 0);
+        b.view = v;
+        assert.strictEqual(G.backdrop(b, themes.theme()), true);
+        assert(b.words().length > 20, 'the backdrop draws');
+        playRec(b.words(), new Cv(1600, 520));              // (the software canvas takes it too)
+        assert.deepStrictEqual([G.WIDE_FLAG.w, G.WIDE_FLAG.h], [300, 8], 'the flag: about 4 times the panel\'s 78 px bar');
+        // the header: tabs only (the HMI's strip above has the app's name), so the first tab starts at its left edge
+        assert.strictEqual(d.chromeRec.tabRects[0].x, 20, 'no app name before the tabs: ' + JSON.stringify(d.chromeRec.tabRects[0]));
+        // the diagnostics column only with the setting on; changing it repaints
+        const frames0 = t.c.frames.length, words0 = d.lastWords.length;
+        t.settings.set('diag', true);
+        assert(await waitFor(() => t.c.frames.length > frames0), 'the setting repaints');
+        assert(d.lastWords.length > words0, 'the column is drawn with the setting on');
+        t.settings.set('diag', false);
+        assert(await waitFor(() => d.lastWords.length === words0), 'and gone with it off');
+        // the diagnostics lines themselves
         const lines = d.diagLines().join('\n');
         assert(/hmi ID8 geo ID8/.test(lines) && /dialect mgu-render\/1/.test(lines) && /area 0,76,2880,764/.test(lines) && /screen 2880x960 touch 1/.test(lines) && /scale 1.394 off 325,33/.test(lines), lines);
         assert.deepStrictEqual(t.log.errors, []);
@@ -356,7 +382,29 @@ test('iDrive 7 is as it was: 1920 x 720 placement, the bar and the HMI button', 
         assert.deepStrictEqual([d.place.x, d.place.y, d.place.w, d.place.h, d.place.scale, d.place.ox, d.place.full], [0, 0, 1920, 720, 1.164, 71, true]);
         assert(d.gpu.grabbing, 'the controller is held where the gate is');
         assert.strictEqual(d.id8(), false);
+        // no wide view there: the page draws its panel, and the header keeps the app's name before the tabs
+        const r = d.canvas(1600, 520);
+        assert.strictEqual(r.view, null);
+        const G = require('../runtime/gauges');
+        G.frame(r, themes.theme(), ['Flex Fuel'], 0, []);
+        await d.present('MAIN', r, () => Promise.resolve());
+        assert(d.chromeRec.tabRects[0].x > 100, 'the app name comes before the tabs: ' + JSON.stringify(d.chromeRec.tabRects[0]));
     } finally { t.end(); }
+});
+
+test('fonts: a size that has the text\'s glyphs (num holds letters and brackets at 40 px only)', async () => {
+    const fonts = require('../runtime/fonts');
+    // iDrive 8: 30 px x 1.394 = 41.8 px. The 64 px atlas has no "l", "(" or ")": the result read "76.1 ga 288.0 L"
+    assert.strictEqual(fonts.get('num', 30 * 1.394, '76.1 gal (288.0 L)').size, 40);
+    assert.strictEqual(fonts.get('num', 30 * 1.394, '13').size, 64, 'digits: the size picked as before');
+    assert.strictEqual(fonts.get('num', 84 * 1.394, '14.8').size, 150);
+    // iDrive 7 (x 1.164): the same atlases as before
+    assert.strictEqual(fonts.get('num', 30 * 1.164, '15.4 gal (58.2 L)').size, 40);
+    assert.strictEqual(fonts.get('num', 84 * 1.164, '59').size, 150);
+    assert.strictEqual(fonts.get('label', 18 * 1.164, 'Purity 99 %').size, 24);
+    assert.strictEqual(fonts.get('bold', 26 * 1.164, 'FLEX FUEL ACTIVE').size, 32);
+    // a character no size has: the size picked first stays
+    assert.strictEqual(fonts.get('num', 50, '12 \u2603').size, 64);
 });
 
 (async () => {

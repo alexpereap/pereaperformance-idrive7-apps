@@ -8,7 +8,8 @@
  * (green "Flex fuel active" while the tune uses the ethanol, "Flex fuel disabled" when Active is 0, in
  * amber when the sensor still reads ethanol; the link's state otherwise) and a detail line. The logo
  * sits bottom right. When Active and CAN are GAP points or more apart (the tune still blending after a
- * fill-up, or a sensor the map does not follow) the header says MISMATCH.
+ * fill-up, or a sensor the map does not follow) the header says MISMATCH. On iDrive 8 the same page sits
+ * centred on a backdrop that fills the wider screen (G.backdrop) instead of in its own panel.
  *
  * GPU-safe: arc / circle / line / text / roundRect / fillRect only (the car's Recorder has no polygons).
  * v = Poller.view() + { demo, fuel (litres, from the source picked), fuelSource ('dme' | 'kombi' |
@@ -159,7 +160,8 @@ function logoLayer(G, t, LOGO, textScale) {
 
 function draw(cv, G, t, v, LOGO) {
     cv.clear(t.bg);
-    G.panel(cv, t, 24, G.TOP, W - 48, G.BOTTOM - G.TOP, null);
+    // iDrive 8: the grey and a wide flag from edge to edge of the screen, the page centred on it; else the panel
+    if (!G.backdrop(cv, t)) G.panel(cv, t, 24, G.TOP, W - 48, G.BOTTOM - G.TOP, null);
     // the label is drawn here, not by the dial: the dial's cached layer is only as wide as the dial and cuts a long one
     const dial = (cx, label, color, g) => {
         G.radial(cv, t, cx, DIAL_Y, DIAL_R, Object.assign({ min: 0, max: 100, unit: '%', decimals: 0, ticks: 10, majorEvery: 2, hot: false, color }, g));

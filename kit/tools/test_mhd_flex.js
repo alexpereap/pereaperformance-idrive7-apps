@@ -552,6 +552,15 @@ async function steps(p, n) { for (let i = 0; i < n; i++) await p.step(); return 
         UI.draw(hmi, G, t, v, LOGO);
         assert.strictEqual(hmi.targets.length, 0);
         UI.draw(new Recorder(UI.W, UI.H), G, t, Object.assign({}, v, { setTarget: undefined }), LOGO);   // no handler: the buttons still draw
+        // iDrive 8: the layer is wider than the page (cv.view): the backdrop from edge to edge instead of the panel
+        const wide = new Recorder(UI.W, UI.H);
+        wide.view = { x0: -233.1, y0: 33.7, x1: 1832.9, y1: 524.4 };
+        wide.own = true;
+        UI.draw(wide, G, t, v, LOGO);
+        play(wide.words(), new Canvas(UI.W, UI.H));
+        const narrow = new Recorder(UI.W, UI.H);
+        UI.draw(narrow, G, t, v, LOGO);
+        assert.notDeepStrictEqual(Array.from(wide.words().slice(0, 40)), Array.from(narrow.words().slice(0, 40)), 'the wide frame starts with the backdrop, not the panel');
     }
     assert.ok(LOGO.w === 180 && LOGO.h > 40 && LOGO.runs.length > 100 && LOGO.palette.every((c) => /^#[0-9a-f]{8}$/.test(c)));
 

@@ -58,7 +58,9 @@ function headUnit(stage, o) {
     }
 
     const id8 = hu.id8 = live && process.env.MGU_EMU_HMI === 'ID8';
-    if (id8) settings.schema.forEach((s) => { if (s.key === 'layout' || s.key === 'renderer') s.hidden = true; });   // (as mgu.js)
+    // (as mgu.js: a setting for one HMI only, and on iDrive 8 neither "layout" nor "renderer")
+    settings.schema.forEach((s) => { if (s.hmi && s.hmi.indexOf(id8 ? 'ID8' : 'ID7') < 0) s.hidden = true; });
+    if (id8) settings.schema.forEach((s) => { if (s.key === 'layout' || s.key === 'renderer') s.hidden = true; });
     let display = null;
     const softImage = (n, cv) => ui._image(n, cv);
     const ui = hu.ui = live ? liveUi(hu, () => display, softImage) : {
@@ -159,7 +161,8 @@ function liveUi(hu, displayOf, softImage) {
     const ui = {
         rhmi: { getByName: (n) => (id8 && !inId8(n) ? null : comp(n)) },
         hmi: id8 ? 'ID8' : 'ID7', noImage: id8,
-        has: (n) => !id8 || inId8(n),
+        // (iDrive 7: the description has a row for every setting but the hidden ones)
+        has: (n) => (id8 ? inId8(n) : !(hu.spec.settings || []).some((s) => 'SET_' + s.key.toUpperCase() === n && s.hidden)),
         note: async (t) => { if (t !== noteText) { noteText = t; log.info('HMI page note: ' + (t || '(cleared)')); } },
         comp,
         image: (name, img) => displayOf().present(name, img, softImage),
@@ -313,7 +316,8 @@ function runLive(stage, dataDir) {
     settings.onChange(() => send({ t: 'settings', values: values() }));
     hu.on('screens', (stack) => { send({ t: 'screens', stack }); focus(null); });
     hu.on('hmiscreen', (n) => send({ t: 'note', s: n === 'SETTINGS' ? 'The HMI\'s own settings screen opens here on the car: the panel has the settings.' : 'The HMI screen ' + n + ' is not drawn here.' }));
-    send({ t: 'spec', spec: { id: spec.id, title: spec.title, version: spec.version, settings: spec.settings || [], screens: spec.screens || [] }, values: values() });
+    // (the panel lists the settings offered on the head unit emulated)
+    send({ t: 'spec', spec: { id: spec.id, title: spec.title, version: spec.version, settings: (spec.settings || []).filter((s) => !s.hidden), screens: spec.screens || [] }, values: values() });
 
     // the HMI's focus over the shown screen's buttons, for the controller while the app does not hold it
     let focused = null;

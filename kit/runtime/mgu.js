@@ -535,7 +535,9 @@ function wireSettings(ctx) {
     }
     // choice / number settings are drop-downs (kit/tools/build.py): their rows are the values in this order
     const values = (s) => (s.type === 'choice' ? (s.options || []).map((o) => o[0]) : s.type === 'number' ? s.steps || [] : null);
-    const refresh = () => Promise.all(schema.map((s) => {
+    // (the settings the HMI's screen has a row for: one left out of this description - "hidden", another HMI's - has none)
+    const rows = schema.filter((s) => has('SET_' + s.key.toUpperCase()));
+    const refresh = () => Promise.all(rows.map((s) => {
         const comp = 'SET_' + s.key.toUpperCase();
         if (!ui.comp(comp)) return null;
         // one another setting offers it ("when"): shown or not as that one is
@@ -545,7 +547,7 @@ function wireSettings(ctx) {
         // other types: two-row buttons in the wide settings state, label above, value below
         return ui.cells(comp, 0, { Text1stRow: s.label, Text2ndRow: settings.display(s.key) });
     }));
-    schema.forEach((s) => {
+    rows.forEach((s) => {
         const comp = 'SET_' + s.key.toUpperCase();
         if (values(s)) {
             // the chosen row of the drop-down (the HMI shows the selection itself)
@@ -651,6 +653,8 @@ async function runInner(impl) {
         log.warn('iDrive 8 UI description with an oap-sdk that looks like iDrive 7\'s (' + sdkVersion + '): the package was built on another head unit?');
     }
     const settings = new Settings(SPEC.settings);
+    // a setting for one HMI only (app.json "hmi": ["ID8"]) is not offered on the other
+    settings.schema.forEach((s) => { if (s.hmi && s.hmi.indexOf(hmi) < 0) s.hidden = true; });
     if (hmi === 'ID8') {
         // no "standard" layout and no software path there (display.js); typed SOME/IP proxies where the raw ones are not set up
         settings.schema.forEach((s) => { if (s.key === 'layout' || s.key === 'renderer') s.hidden = true; });

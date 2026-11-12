@@ -59,6 +59,13 @@ def id8(app_id):
     failed += check(app_id + ': ID8 has a host state per canvas screen', sorted(state_ids) == sorted(canvas), str(state_ids))
     sids = [c['rows'][0]['Text']['value'] for cont in ui['containers'].values() for c in cont['components'].values() if c['type'] == 'title']
     failed += check(app_id + ': ID8 titles use strings the ID7 description defines', all(s in strings for s in sids), str(sids))
+    # a setting for iDrive 8 only ("hmi": ["ID8"]) has no row in the iDrive 7 description, and reaches the app
+    only8 = [s['key'] for s in spec.get('settings', []) if s.get('hmi') and 'ID7' not in s['hmi']]
+    names7 = [c['name'] for cont in ui7['containers'].values() for c in cont['components'].values()]
+    failed += check(app_id + ': iDrive 8 only settings are not in the ID7 description', not any('SET_' + k.upper() in names7 for k in only8), str(only8))
+    with7 = dict(spec, settings=[dict(s, hmi=['ID7', 'ID8']) if s['key'] in only8 else s for s in spec.get('settings', [])])
+    names_all = [c['name'] for cont in build.build_ui(with7, 'en')[1]['containers'].values() for c in cont['components'].values()]
+    failed += check(app_id + ': a setting for both HMIs is in the ID7 description', all('SET_' + k.upper() in names_all for k in only8))
     # the fallback should Hmi8 refuse the labels: the bare host state (a title only)
     bare_xml, bare_ui, _ = build.build_ui_id8(dict(spec, id8Labels=False))
     bare = [c['type'] for cont in bare_ui['containers'].values() for c in cont['components'].values()]

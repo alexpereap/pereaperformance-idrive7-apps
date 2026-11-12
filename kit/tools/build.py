@@ -253,7 +253,8 @@ def build_ui(spec, language='en'):
 
     def settings_items(items):
         for s in spec['settings']:
-            if s.get('hidden'):
+            # ("hmi": ["ID8"]: a setting offered on iDrive 8 only - not in this, the iDrive 7 description)
+            if s.get('hidden') or (s.get('hmi') and 'ID7' not in s['hmi']):
                 continue
             name = 'SET_' + s['key'].upper()
             if s['type'] == 'bool':

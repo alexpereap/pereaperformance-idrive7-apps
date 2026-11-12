@@ -43,6 +43,10 @@
  * (touch only): its header sits at the top of that area, the 1600 x 520 page is scaled into the rest
  * and centred, Settings is the header's tab and opens the kit's sheet. No "standard" layout and no
  * software path there; without a usable renderer the HMI's page says so (ui.note).
+ * Its own look: the layer is wider than the page, so a frame gets cv.view, the layer's rectangle under the
+ * header in the page's px, and G.backdrop paints the panel's grey and a wide flag over all of it; the header
+ * is in that grey too, with the tabs only (the HMI's title strip above already names the app). The setting
+ * "diag" (Show diagnostics, offered there only) draws what the kit found in the left margin.
  */
 const { Recorder, play } = require('./record');
 const { Canvas } = require('./canvas');
@@ -81,8 +85,6 @@ const ID8 = {
     area: { x: 0, y: 76, w: 2880, h: 764 },
     left: 0, colEnd: 0, headBg: '#000000', status: null,
 };
-/* first on-car sessions: the kit draws what it found (HMI, renderer, placement) in the page's left margin */
-const ID8_DIAG = true;
 /* full-screen layout, in the surface's pixels (it covers the whole screen) */
 const FULL = {
     headH: 80,                                  // header in the HMI's title strip
@@ -135,6 +137,7 @@ class Display {
             if (k === 'layout') { this._place(); this.lastWords = null; }
             if (k === 'theme') this.bgShown = null;
             if (k === 'renderer') this._mode();
+            if (k === 'diag') this._repaint();
         });
         this._mode();
         // slim bar: light the button the controller is on (HMI focus events) and flash on press
@@ -247,6 +250,16 @@ class Display {
                 : { x: 0, y: ID8.area.y, w: scr.w, h: Math.max(400, scr.h - ID8.area.y - (ID8.screen.h - ID8.area.y - ID8.area.h)) };
         return Object.assign({}, ID8, { screen: { w: scr.w, h: scr.h }, area, areaFrom: sane ? 'X_READY' : 'default' });
     }
+    /**
+     * iDrive 8: what the layer shows under the header, in the page's logical px ({ x0, y0, x1, y1 }): the page is
+     * centred in a layer wider than it, so a backdrop can reach the screen's edges (G.backdrop). null elsewhere.
+     */
+    _view() {
+        const pl = this.place;
+        if (!pl || !pl.full || this.geo.id !== 'ID8') return null;
+        const s = pl.scale;
+        return { x0: -pl.ox / s, y0: (this.headH() - pl.oy) / s, x1: (pl.w - pl.ox) / s, y1: (pl.h - this.barH() - pl.oy) / s };
+    }
     /** The kit runs the screen: mgu-render/1 with touch, full-screen layout (iDrive 8: any renderer that routes touch). */
     own() {
         const g = this.gpu;
@@ -341,6 +354,7 @@ class Display {
         const r = this.sheetRec && this.sheetRec.textScale === sc ? this.sheetRec : (this.sheetRec = new Recorder(PAGE.w, PAGE.h, { textScale: sc }));
         r.reset();
         r.extra = this.place.extra || 0;
+        r.view = this._view();
         let targets = [];
         try { targets = this.sheet.draw(r, this.theme()) || []; } catch (e) { this.log.error('sheet draw', e); }
         this.sheetTargets = targets;
@@ -697,6 +711,8 @@ class Display {
         // the kit runs the screen: buttons drawn on the page (G.button) take the place of the bar's
         r.own = this.own() && this.active();
         r.extra = r.own && this.place.extra ? this.place.extra : 0;
+        // iDrive 8: the layer's rectangle under the header, for a backdrop from edge to edge (G.backdrop)
+        r.view = r.chrome ? this._view() : null;
         return r;
     }
 
@@ -859,13 +875,16 @@ class Display {
         // (iDrive 8: the header is inside the app area, under the HMI's strip, and runs the whole width)
         const hx = Math.max(0, geo.left - pl.x);
         const headW = id8 ? W - hx : geo.status.x - pl.x - hx;
-        const end = G.header(c, Object.assign({}, t, { bg: geo.headBg }), hx, 0, headW, FULL.headH,
-            this.screen.title || this.spec.title, tb.tabs, tb.sel, tb.badges, true, true);
+        // (iDrive 8: in the backdrop's grey, no edge line, and without the app's name - the HMI's strip above has it)
+        const headBg = id8 ? G.backdropColor(t) : geo.headBg;
+        const end = G.header(c, Object.assign({}, t, { bg: headBg }, id8 ? { headLine: false } : null), hx, 0, headW, FULL.headH,
+            id8 ? null : this.screen.title || this.spec.title, tb.tabs, tb.sel, tb.badges, true, true);
         // the HMI's own title is in the strip under the header: a narrower header (a sheet: no tabs) stays
         // as wide as the app's widest, so none of that title shows beside it
         if (!this.sheet) this.headMax = Math.max(this.headMax || 0, end);
         const sx = this.headEnd = id8 ? W : Math.min(geo.status.x - pl.x, Math.ceil(Math.max(end, this.headMax || 0)));
-        if (sx > end) { c.fillRect(end, 0, sx - end, FULL.headH - 2, geo.headBg); c.fillRect(end, FULL.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
+        if (sx > end && id8) c.fillRect(end, 0, sx - end, FULL.headH, headBg);
+        else if (sx > end) { c.fillRect(end, 0, sx - end, FULL.headH - 2, geo.headBg); c.fillRect(end, FULL.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
         // the tab the controller is on (the kit holds it: Display._ccu)
         const ft = this.focusTab != null && (!this.sheet || this.sheetHead) && (c.tabRects || []).find((q) => q.i === this.focusTab);
         if (ft) c.strokeRoundRect(ft.x + 4, ft.y + 10, ft.w - 8, ft.h - 20, 10, 2, t.sel || t.accent);
@@ -896,14 +915,14 @@ class Display {
         if (!id8) {
             c.clip(sx, 0, W - sx, geo.status.h).clear(0).noclip();
             if (hx > 0) c.clip(0, 0, hx, geo.colEnd - pl.y).clear(0).noclip();
-        } else if (ID8_DIAG && !this.sheet) this._drawDiag(c, t);
+        } else if (this.settings.get('diag') && !this.sheet) this._drawDiag(c, t);
         drawCredit(c, W - 18, FULL.headH + 17);
         r.xf(1, 0, 0).append(c).xf();
     }
 
     /**
-     * What the kit found on this head unit, for the first runs on an iDrive 8 car (one photo of the screen says
-     * which HMI, SDK, renderer and placement): short lines, in the log too (mgu.js) and in the page's left margin.
+     * What the kit found on this head unit (one photo of the screen says which HMI, SDK, renderer and
+     * placement): short lines, in the log too (mgu.js) and, with the setting "diag" on, in the page's left margin.
      */
     diagLines() {
         const g = this.gpu, pl = this.place, x = g && g.xready;

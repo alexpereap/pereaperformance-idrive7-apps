@@ -193,9 +193,10 @@ node kit/tools/emu.js perea_mhd_flex            # the app in the browser (demo d
 
 ## Install
 
-iDrive 7 is supported; iDrive 8 is experimental and not yet verified on a car (the repository's
-README has the differences and what to send back from a first run). There the app is drawn by the
-Store's renderer only, is operated by touch, and Settings is the header's tab.
+iDrive 7 and iDrive 8 (the repository's README has the differences). On iDrive 8 the app is drawn
+by the Store's renderer only, is operated by touch, Settings is the header's tab, and the page sits
+centred on a backdrop that fills the wider screen; **Show diagnostics** in Settings (there only)
+draws what the kit found on the head unit in the left margin.
 
 The app needs a renderer on the head unit (`needs: ["renderer"]` in `mgu-repo.json`): the
 [MGU Store](https://github.com/robertnisipeanu/mgu-store)'s own Renderer, or `idrive7-renderd`
@@ -230,7 +231,7 @@ python3 kit/tools/build.py perea_mhd_flex
 ```
 
 ```sh
-node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.5.0.tgz
+node mgu-store/deploy/mgu-install.js usb-repo /media/<your-stick> dist/perea_mhd_flex@1.6.0.tgz
 ```
 
 The package lands in `<stick>/mgu-repo/local/` with a generated catalog; install it from the

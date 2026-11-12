@@ -155,6 +155,33 @@ function drawPanel(cv, t, x, y, w, h, title) {
     if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold' });
 }
 
+/**
+ * iDrive 8: the page's backdrop over everything the screen shows under the header (cv.view, display.js: the
+ * renderer's layer is wider than the page, which stays centred in it). The panel's grey from edge to edge, the
+ * theme's stripes as a wide bar at the top left (M tricolour: the flag, its last part with an angled end) and
+ * the thin white line from it to the right edge. Returns true when drawn; false where there is no such view
+ * (iDrive 7, the software path): the page then draws its panel as before.
+ *     if (!G.backdrop(cv, t)) G.panel(cv, t, 24, G.TOP, W - 48, G.BOTTOM - G.TOP);
+ */
+const WIDE_FLAG = { w: 300, h: 8, gap: 4, cut: 12 };
+const BACKDROP = { color: '#b4bccc', alpha: 0.07 };          // (the panel's overlay: drawPanel)
+function backdrop(cv, t) {
+    const v = cv.view;
+    if (!v) return false;
+    const x = v.x0, y = v.y0, w = v.x1 - v.x0, h = v.y1 - v.y0;
+    cv.fillRect(x, y, w, h, withAlpha(BACKDROP.color, BACKDROP.alpha));
+    const st = t.stripes || [t.accent], F = WIDE_FLAG, sw = (F.w - F.gap * (st.length - 1)) / st.length;
+    st.forEach((c, i) => {
+        const sx = x + i * (sw + F.gap), last = i === st.length - 1;
+        if (last) cv.quad([[sx, y], [sx + sw, y], [sx + sw - F.cut, y + F.h], [sx, y + F.h]], c);
+        else cv.fillRect(sx, y, sw, F.h, c);
+    });
+    cv.fillRect(x + F.w + 3, y + 3, w - F.w - 3, 1.5, withAlpha('#ffffff', 0.9));
+    return true;
+}
+/** The backdrop's grey as one opaque colour over the theme's background (the header's strip on iDrive 8). */
+function backdropColor(t) { return mix(t.bg, BACKDROP.color, BACKDROP.alpha); }
+
 /* ---------------- radial dial ---------------- */
 /** 270-degree radial gauge centred at (cx, cy). */
 function radial(cv, t, cx, cy, r, g) {
@@ -769,7 +796,8 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges) {
     names.forEach((n, i) => { if (end + tw[i] <= x + room) end += tw[i]; });
     end = Math.min(x + w, end + (badgesW ? 12 + badgesW : 0) + 16);
     cv.fillRect(x, y, end - x, h, t.bg);
-    cv.fillRect(x, y + h - 2, end - x, 2, withAlpha('#ffffff', 0.22));
+    // (t.headLine false: no edge under it - iDrive 8, where the backdrop's flag and line follow right below)
+    if (t.headLine !== false) cv.fillRect(x, y + h - 2, end - x, 2, withAlpha('#ffffff', 0.22));
     let tx = x + 20;
     if (showTitle) {
         cv.text(title, tx, y + h / 2 + tsize * 0.36, tsize, t.text);
@@ -859,7 +887,7 @@ function stripes(cv, t, x, y, w) {
 }
 
 module.exports = {
-    BAR_H, TOP, BOTTOM, pageBottom, MARGIN, toMargin, frame, header, layer, onLayerDrop, panel, segBar, radial, needle, ring, bar, stat, readout,
+    BAR_H, TOP, BOTTOM, pageBottom, MARGIN, toMargin, frame, header, layer, onLayerDrop, panel, backdrop, backdropColor, WIDE_FLAG, segBar, radial, needle, ring, bar, stat, readout,
     shiftLights, gear, chart, table, pill, tyres, gmeter, menuBar, stripes, button, onConfirm, smooth, hold, niceStep,
     fmt, isNum, clamp, mix, zoneColor, withAlpha, ramp,
 };
