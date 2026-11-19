@@ -11,7 +11,7 @@ from this repository: no BMW SDK leaves the car, and none is in this repository.
 | App | Id | What it does |
 |---|---|---|
 | **Flex Fuel** | `perea_mhd_flex` | The ethanol content an **MHD-flashed DME** runs on, as two dials: *Ethanol Content (Active)*, what the tune uses, and *Ethanol Content (CAN)*, what the flex fuel sensor reports; a third dial with the fuel in the tank (gallons and litres) and a **blend calculator**: how much ethanol to add to reach a target. Read-only over the car's own diagnostic link. Flags a map that ignores the sensor and a mismatch between the two. Details, protocol and how to add your ROM: [apps/perea_mhd_flex/README.md](apps/perea_mhd_flex/README.md). |
-| **Cluster Themes** | `perea_cluster_themes` | Redraws the whole **instrument cluster** in a theme of your choice (GT3 race dash, M, M view, Vector, Sport, Minimal, Track, Drag, Rally, Retro 80s, Cruise, Dyno, Ribbon), picked on the centre screen or by drive mode. **iDrive 7 only**, and it draws through [cluster-render](https://github.com/robertnisipeanu/idrive-apps) (0.5.1 or newer), which must be installed first. A copy of [bimmer-lab](https://github.com/bimmer-lab/apps)'s app (0.19.0, MIT), kept here. Themes, settings and what is verified on a car: [apps/perea_cluster_themes/README.md](apps/perea_cluster_themes/README.md); working on it: [docs/cluster-themes.md](docs/cluster-themes.md). |
+| **Cluster Themes** | `perea_cluster_themes` | Redraws the whole **instrument cluster** in a theme of your choice (GT3 race dash, M, M view, Vector, Sport, Minimal, Track, Drag, Rally, Retro 80s, Cruise, Dyno, Ribbon), picked on the centre screen or by drive mode. **iDrive 7 only**, and it draws through [cluster-render](https://github.com/robertnisipeanu/idrive-apps) (0.5.1 or newer), which must be installed first. **The app is [bimmer-lab](https://github.com/bimmer-lab/apps)'s, and all credit for it goes to them**; this is a copy of their 0.19.0 (MIT) with a fix so that it installs (0.19.1, below). Themes, settings and what is verified on a car: [apps/perea_cluster_themes/README.md](apps/perea_cluster_themes/README.md); working on it: [docs/cluster-themes.md](docs/cluster-themes.md). |
 
 ![Flex Fuel](docs/screens/perea_mhd_flex.png)
 
@@ -22,6 +22,23 @@ from this repository: no BMW SDK leaves the car, and none is in this repository.
 
 > **Cluster Themes draws over BMW's own cluster.** Its readouts are for information only: follow
 > BMW's own warnings, and pick *Off* in the app to get BMW's cluster back. It only reads from the car.
+
+**Credit.** Cluster Themes was made by [bimmer-lab](https://github.com/bimmer-lab/apps): the themes, the
+centre-screen page, the drawing engine in `shared/`, the bench and the tools are their work, on
+[cluster-render](https://github.com/robertnisipeanu/idrive-apps) by Robert Nisipeanu. What this repository
+adds to it is small:
+
+- **It installs (0.19.1).** bimmer-lab's 0.19.0 is refused on install by BMW's app manager (the Store's
+  *install failed … generateSomeipInterfaces*,
+  [their issue #26](https://github.com/bimmer-lab/apps/issues/26)): it asks for the head unit's now playing
+  (`HmiMediaState`) by instance `1`, and the units name that interface's instances `HMI_CID`,
+  `HMI_FoMo_Left` and `HMI_FoMo_Right`. Here the app asks for `HMI_CID`. Installed and running on an
+  iDrive 7 car since 2026-11-18.
+- **The build fits an app to the head unit it builds on**: what that unit's interface catalog does not
+  have comes out of the app's SOME/IP manifest (`fit_to_unit()` in `kit/tools/build.py`, from
+  idrive7-apps), so a signal a car lacks costs that readout and not the install. This holds for
+  every app here.
+- Its own id (`perea_cluster_themes`) and Store entry, and a start test.
 
 ## Head units
 
@@ -162,7 +179,7 @@ language shows them in English.
   (Fieldistor) and the Korean by jaimeen shim. Fonts under the Ubuntu Font Licence and the SIL
   OFL; the emulator's draw engine (mgu-render) GPL-3.0-or-later, source included. All of it in
   `THIRD_PARTY_NOTICES.md`.
-- Cluster Themes (`apps/perea_cluster_themes`, `shared/`, `bench/`, `tools/`, `scripts/`): MIT,
-  Copyright (c) 2026 bimmer-lab; `shared/cluster_render_client.js` MPL-2.0, Copyright (C) 2026
+- Cluster Themes (`apps/perea_cluster_themes`, `shared/`, `bench/`, `tools/`, `scripts/`): bimmer-lab's
+  work, MIT, Copyright (c) 2026 bimmer-lab; `shared/cluster_render_client.js` MPL-2.0, Copyright (C) 2026
   Robert Nisipeanu; its fonts under the SIL OFL. In `THIRD_PARTY_NOTICES.md` and the app's `NOTICE`.
 - BMW's SDK and the `.mgu` / `.tgz` packages that contain it are never published.

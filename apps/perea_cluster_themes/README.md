@@ -2,9 +2,20 @@
 
 <img src="icon.png" width="72" align="left" alt="Cluster Themes icon">
 
-> A copy of [bimmer-lab](https://github.com/bimmer-lab/apps)'s Cluster Themes 0.19.0 (commit `ab81cee`, MIT), kept in this repository as `perea_cluster_themes`. The issue numbers below are that repository's. iDrive 7 only; install **cluster-render** 0.5.1 or newer first (Store source `robertnisipeanu/idrive-apps`). Working on it: [docs/cluster-themes.md](../../docs/cluster-themes.md).
+> **Cluster Themes is [bimmer-lab](https://github.com/bimmer-lab/apps)'s app, and all credit for it goes to bimmer-lab**: the themes, the centre-screen page, the drawing engine (`shared/`), the bench and the tools are their work, with the projects they build on listed in [NOTICE](NOTICE). This is a copy of their 0.19.0 (commit `ab81cee`, MIT) kept in this repository as `perea_cluster_themes`, with the install fix below. Everything from [Themes](#themes) on is bimmer-lab's own text, and the issue numbers in it are their repository's.
 >
-> **0.19.1 (this repository): installs again.** 0.19.0 asked for the head unit's now playing (`HmiMediaState`, the Vector theme's music panel) by instance `1`, which the units do not have: its instances are named `HMI_CID`, `HMI_FoMo_Left` and `HMI_FoMo_Right`. BMW's app manager then refused the whole app (`generateSomeipInterfaces`; bimmer-lab/apps issue #26). The app now asks for `HMI_CID`, the centre display, and the build takes out of the app's SOME/IP manifest whatever the unit it builds on does not have, so a signal a car lacks costs that readout, not the install. Whether `HMI_CID` fills the music panel is not verified on a car yet.
+> iDrive 7 only. Install **cluster-render** 0.5.1 or newer first (Store source `robertnisipeanu/idrive-apps`).
+
+## What this repository adds
+
+- **0.19.1: it installs.** 0.19.0 was refused by BMW's app manager on install (`generateSomeipInterfaces`, the Store's "install failed"; [bimmer-lab/apps issue #26](https://github.com/bimmer-lab/apps/issues/26)). It asked for the head unit's now playing (`HmiMediaState`, for the Vector theme's music panel) by instance `1`, and the head units have no instance of that name: theirs are `HMI_CID`, `HMI_FoMo_Left` and `HMI_FoMo_Right`. The app now asks for `HMI_CID`, the centre display, and opens that one.
+- **The build fits the app to the head unit.** When the Store builds the app on the car, the build takes out of the app's SOME/IP manifest whatever that unit's interface catalog does not have (`fit_to_unit()`, from [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps)) and the app's log names it at each start. A signal a car lacks costs that readout, not the install.
+- **Its own id and Store entry**: `perea_cluster_themes`, listed for iDrive 7 only, so it can sit beside bimmer-lab's own `cluster_themes`.
+- **A start test** (`kit/tools/test_cluster_themes.js`) and the bench staging the app without BMW's SDK.
+
+**On a car:** 0.19.1 was installed from this repository on an iDrive 7 car on 2026-11-18 and runs there; 0.19.0 was refused on the same car. Whether `HMI_CID` fills the Vector theme's music panel from every source (radio, Bluetooth, USB, CarPlay) is still to be seen, as bimmer-lab says of the panel itself.
+
+Working on it: [docs/cluster-themes.md](../../docs/cluster-themes.md).
 
 Redraws the whole instrument cluster in a theme of your choice. Open **Cluster Themes** from the apps menu on the center screen: its own page has the themes with pictures, the readouts, the badge, the Waze map, warnings and settings.
 
@@ -175,7 +186,7 @@ More themes are on the way.
 
 ## On the car
 
-Tested on a 2020 X3 M40i. Checked on the car: GT3 and Dyno draw complete, the Waze map shows inside GT3 and Sport, and a theme and a HUD layout show together. Still to be checked:
+bimmer-lab tested it on a 2020 X3 M40i (this copy's own car test is under [What this repository adds](#what-this-repository-adds)). Checked on that car: GT3 and Dyno draw complete, the Waze map shows inside GT3 and Sport, and a theme and a HUD layout show together. Still to be checked:
 
 - the other themes on the real screen, including M since its 0.10.0 rework;
 - whether BMW's warning lights still show over the dash (start the car with a seat belt off and look);
@@ -183,8 +194,8 @@ Tested on a 2020 X3 M40i. Checked on the car: GT3 and Dyno draw complete, the Wa
 - the Hybrid battery readout on a plug-in hybrid;
 - Play demo, the count-in shift lights and the switch-off guard (0.16.0).
 
-If something looks wrong on your car, the last line of the Settings tab says what the app is doing and why anything is not drawn. Please open an issue with it.
+If something looks wrong on your car, the last line of the Settings tab says what the app is doing and why anything is not drawn. Please open an issue with it (for the app itself, in [bimmer-lab/apps](https://github.com/bimmer-lab/apps/issues)).
 
-See [Use at your own risk](../../README.md#use-at-your-own-risk) before installing.
+See bimmer-lab's [Use at your own risk](https://github.com/bimmer-lab/apps#use-at-your-own-risk) before installing.
 
-Version history is in the repo's [CHANGELOG.md](../../CHANGELOG.md).
+Version history up to 0.19.0 is in bimmer-lab's [CHANGELOG.md](https://github.com/bimmer-lab/apps/blob/main/CHANGELOG.md).
