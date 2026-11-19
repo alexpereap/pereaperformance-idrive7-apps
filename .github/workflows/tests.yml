@@ -17,6 +17,8 @@ jobs:
       - run: node kit/tools/test_runtime.js
       - name: build.py output - the iDrive 7 description and manifest unchanged, the iDrive 8 ones by Hmi8's rules
         run: python3 kit/tools/test_build.py
+      - name: What a unit's interface catalog lacks comes out of the manifest (or BMW's installer refuses the app)
+        run: python3 kit/tools/test_fit_to_unit.py
       - name: The start sequence on both SDK shapes (iDrive 7 as before, iDrive 8's lifecycle)
         run: node kit/tools/test_start.js
       - name: Locale catalogs match their TSVs and hold only strings this repository shows

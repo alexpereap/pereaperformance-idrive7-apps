@@ -22,6 +22,20 @@ mgu-repo.json     tells the Store how to build the apps (Cluster Themes has its 
 
 `python3 kit/tools/build.py perea_cluster_themes` builds the app into `dist/`. It needs an `oap-sdk/` folder: on the car the Store makes the real one from a BMW app. Without one, `--preview-only` stages the app in `dist/perea_cluster_themes/` (nothing installable), which is what the bench and the tests run.
 
+## Signals and the unit's catalog
+
+BMW's app manager installs an app against the head unit's interface catalog (`/etc/oap/someip/someip-interfaces.json`) and refuses the whole app for one field, method, access or instance of `app.json` `"signals"` that the catalog lacks. The Store shows only the first line of that refusal: `generateSomeipInterfaces::generateSomeipInterfaces({ userId: ...`.
+
+- An interface is asked for by instance `1` unless its entry names one (`"_instances": "HMI_CID"`); `kit/runtime/car.js` opens `1` too unless the engine passes `$instance` with the same name (`shared/hud.js`, `MEDIA_INSTANCE`).
+- `kit/tools/build.py` `fit_to_unit()` (from upstream idrive7-apps) takes out of the manifest what the catalog of the unit it builds on lacks, prints it, and writes `kit/missing-interfaces.json`, which the app logs at each start. On a PC there is no catalog and nothing is taken out.
+- To check an app against a catalog copied from a car (`scp root@<unit>:/etc/oap/someip/someip-interfaces.json captures/`, gitignored):
+
+```sh
+MGU_SOMEIP_CATALOG=captures/someip-interfaces.json python3 kit/tools/build.py --preview-only perea_cluster_themes
+```
+
+  A line `this unit has no ... - built without it: ...` names each thing that unit lacks; no such line means the manifest fits.
+
 ## Test on the PC
 
 ```sh

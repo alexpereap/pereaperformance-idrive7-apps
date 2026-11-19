@@ -340,6 +340,9 @@ const MVIEW_RPM = 8000;            // the M view theme's rev scale: 0..8
 const MVIEW_SPEED = { us: 200, metric: 330 };
 const VDASH_RPM = 8000;            // the Vector theme's rev counter: 0..8
 const MEDIA_IF = 'de.bmw.infotainment.hmi.hmimediastate.HmiMediaState';   // the head unit's now playing (front)
+// Its instances have names, and none is '1': the units' catalogs list HMI_CID (the centre display), HMI_FoMo_Left and
+// HMI_FoMo_Right. Asked for as '1' (0.19.0), BMW's installer refused the whole app (bimmer-lab/apps issue #26).
+const MEDIA_INSTANCE = 'HMI_CID';
 const MEDIA_TYPES = { 1: 'ARTIST', 2: 'ALBUM', 3: 'TITLE' };
 /** A song's text for the baked fonts: accents dropped, curly quotes and dashes made plain, the rest left out. */
 function mediaText(v) {
@@ -798,6 +801,7 @@ class HudApp {
         // (app.json): not every unit may have it, and whether CarPlay fills it is not known yet. Added last, so the
         // one-at-a-time SOME/IP setup (signals.js) reaches every vehicle signal before it, whatever this one does
         extra[MEDIA_IF] = {
+            $instance: MEDIA_INSTANCE,
             playerMetadata: (v) => this._mediaFeed('meta', v),
             trackProgress: (v) => this._mediaFeed('progress', v),
         };

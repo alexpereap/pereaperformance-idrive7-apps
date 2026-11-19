@@ -3,6 +3,8 @@
 <img src="icon.png" width="72" align="left" alt="Cluster Themes icon">
 
 > A copy of [bimmer-lab](https://github.com/bimmer-lab/apps)'s Cluster Themes 0.19.0 (commit `ab81cee`, MIT), kept in this repository as `perea_cluster_themes`. The issue numbers below are that repository's. iDrive 7 only; install **cluster-render** 0.5.1 or newer first (Store source `robertnisipeanu/idrive-apps`). Working on it: [docs/cluster-themes.md](../../docs/cluster-themes.md).
+>
+> **0.19.1 (this repository): installs again.** 0.19.0 asked for the head unit's now playing (`HmiMediaState`, the Vector theme's music panel) by instance `1`, which the units do not have: its instances are named `HMI_CID`, `HMI_FoMo_Left` and `HMI_FoMo_Right`. BMW's app manager then refused the whole app (`generateSomeipInterfaces`; bimmer-lab/apps issue #26). The app now asks for `HMI_CID`, the centre display, and the build takes out of the app's SOME/IP manifest whatever the unit it builds on does not have, so a signal a car lacks costs that readout, not the install. Whether `HMI_CID` fills the music panel is not verified on a car yet.
 
 Redraws the whole instrument cluster in a theme of your choice. Open **Cluster Themes** from the apps menu on the center screen: its own page has the themes with pictures, the readouts, the badge, the Waze map, warnings and settings.
 

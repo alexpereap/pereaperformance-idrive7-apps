@@ -110,6 +110,7 @@ node kit/tools/test_mhd_flex.js                                       # the app:
 node kit/tools/test_runtime.js                                        # the kit: display, renderer client, settings sheet
 node kit/tools/test_locales.js                                        # every language: catalogs, labels, glyphs
 node kit/tools/test_cluster_themes.js                                 # Cluster Themes: staged, started, its default theme on a stand-in cluster-render
+python3 kit/tools/test_fit_to_unit.py                                 # the build takes out of an app's SOME/IP manifest what a unit's catalog lacks
 node bench/server.js                                                  # Cluster Themes' cluster in the browser: http://localhost:8078 (bench/README.md)
 ```
 

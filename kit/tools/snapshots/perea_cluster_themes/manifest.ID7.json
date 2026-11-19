@@ -42,7 +42,7 @@
         "playerMetadata": "rs",
         "trackProgress": "rs"
       },
-      "instances": "1"
+      "instances": "HMI_CID"
     },
     "de.bmw.infotainment.hmi.remote.RemoteHmi": "*",
     "de.bmw.infotainment.hmi.remote.RemoteHmiApplication": "*",
