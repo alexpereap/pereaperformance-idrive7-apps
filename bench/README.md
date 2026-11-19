@@ -1,0 +1,57 @@
+# Bench
+
+Run an app that draws through cluster-render on the PC and watch its display in a browser: the 1920x720 instrument cluster (Cluster Themes). No car needed. The bench comes from [bimmer-lab/apps](https://github.com/bimmer-lab/apps), where it also runs HUD Widgets on the 800x480 HUD; what it says about the HUD below applies to an app drawing on that target.
+
+```sh
+node bench/server.js                   # Cluster Themes (perea_cluster_themes), then open http://localhost:8078
+```
+
+The page draws whichever target the app's `app.json` `config.target` names. One app at a time; set `BENCH_PORT` to run a second bench next to the first.
+
+- `server.js` stages the app with the kit (`kit/tools/build.py --preview-only`: the same build the Store runs on the car, without BMW's SDK) into `dist/`, then runs it.
+- It also stands in for `cluster-render`. It listens on a Unix socket, speaks protocol v1 (the same framing and ops as `cluster_render_client.js`), and streams every layer to the page. Protocol mistakes such as bad sizes, unknown refs, layers running off the target or `exclusive` layers show up in the log as warnings or errors.
+- `run-app.js` runs the built app inside the kit's stub head unit (`kit/tools/hu-stub.js`, live mode): a fake RHMI and SOME/IP with no BMW SDK. `HUD_CLUSTER_SOCKET` points the app at the bench socket. Its data folder is `bench/.data/<app id>/`, which stands in for the app's `data/` on the car. `BENCH_DATA=/some/folder` uses that folder instead (the start test's empty one).
+- `page.html` draws the layers. Image layers are the app's raw RGBA pushes, and effect layers run the app's real GLSL shader in WebGL. Layers are stacked by class, then z.
+
+**No oap-sdk:** the bench stages the app with `--preview-only`, so no `oap-sdk/` is needed or written and nothing installable comes out of a bench run. The stub head unit stands in for the SDK.
+
+**Node version:** the car runs Node 8.16.2. The app runs on the Node that runs the bench (the log says which); set `BENCH_NODE=/path/to/node` to run it on another, such as an 8.16.2 you downloaded. The build itself needs `python3` and `node` on PATH.
+
+**Live reload:** saving any file under the app's folder, `shared/` or `kit/` rebuilds and restarts the app. A layout saved into `bench/.data/<app id>/layouts/<name>.json` overrides the built-in one of that name without a restart: the app's own watcher reloads it, so that path gets tested too.
+
+**Center screen:** the panel shows the status row the car shows, and the settings. A change is pressed on the stub's components (`SET_<KEY>`, a drop-down row or a checkbox press), the same way the car's HMI sends it, so the kit's own settings code handles it. Values are saved in `bench/.data/<app id>/settings.json`; delete the folder to go back to the defaults.
+
+**Signals:** "Demo drive" is the kit's `sim.js`. It has no boost, so boost reads `--`. "Manual" feeds raw SOME/IP values (the fields and scaling the car sends, including FES `displayBoostPressure`), and the kit's `car.js` decodes them. Slider units are rpm, km/h, °C and bar. A manual gear above 0 reads as D. A manual POST to `/signals` may also carry `tyreP` (bar) and `tyreT` (°C), fed as the TPMS fields for all four corners (the rear pair a notch higher). The bench also feeds the car's units as bar and °C, and `program` (`S` or `M`) as the MDrive gearbox display, so the gear reads S3 or M3. It may carry `condition` too (BMW's vehicle state: a number such as 10 drive-ready, 12 switching off, 5 off, or a name such as `FAHREN`), fed as `VehicleCondition`; without it the app never sees a state, as on a car that doesn't send one (the switch-off guard in `shared/vehicle_state.js` then holds nothing back).
+
+**Directions:** the car's guidance service doesn't exist on the bench, so `fake-nav.js` stands in for it: `POST /nav {"scenario": "turn"}` (or `roundabout`, `lanes`, `then`, `uturn`, `off`) answers the event list the HUD's `nav` widget asks for, in the car's own format, says CarPlay is guiding and feeds the lanes. The distance counts down 10 m a second. Only the car shows whether its guidance really sends them (Redline proved CarPlay with Apple Maps; Waze over CarPlay sends no turns).
+
+**Play demo:** `POST /demo` with `{"play": true}` starts the page's "Play demo" show (shared/demo_script.js) and `{"play": false}` stops it; `"at": ms` starts it that far in, for screenshots of a given moment. It only starts while the manual speed is under 3 km/h and stops itself once the manual speed goes over 5 km/h, as on the car. Going back from Manual to the demo drive feeds a speed of 0 first, so car.js doesn't take the last manual speed for a moving car ("Demo data: On" gives way to a car driving over 5 km/h).
+
+**What the bench can't tell you:** whether SOME/IP signals arrive on the car, real HUD brightness, color and blur, GPU timing, how our layers sit next to the CarPlay or Android Auto HUD map, or how the HMI draws the center-screen page. Only the car shows those. The bench also doesn't draw mesh or video layers.
+
+**Backdrop:** for the HUD, a road. For the cluster, a rough stand-in for BMW's own gauges, warning lights, the map window and the solid black gear box the car paints over our layers, to show what the app's layers cover. Where the map window really sits is unverified; the gear box is measured.
+
+**Car view** (the checkbox on the stage, on by default, `?car=0` turns it off): what the driver actually sees, drawn over the composited layers. On the cluster, a dark mask above the hood line (orange curve: the hood hides the top corners, down to y 273 at the left edge and y 240 at the right), BMW's gear box at x 1406-1597 y 342-419 filled solid black, and the seat-belt light rect at x 587-626 y 663-700. On the HUD, a dark mask outside the window seen through the windshield (x 120, y 100, 485x278; it moves with eye position and HUD height). The numbers come from car photos taken Nov 5 2026 (`design/photos/calibration-2026-11-05.json`) and live in one place, `shared/visible.js`: the server sends them to the page in its `hello` event, and the app's `layouts.js` runs the same `check()` on every layout it loads, so the app log warns per widget (`layout "gt3": speed_box: top-left corner 51 px under the hood`, `... overlaps BMW's gear box ...`, `... 30 px outside the visible HUD window ...`). Warnings only; a layout is never refused for this. The layers table flags each layer the check would warn about (`hood`, `box`, `belt`, `window`; hover for the reason).
+
+**Layer cap:** cluster-render draws at most 8 layers per client connection, 32 across all clients (`CompositorLimits` in its `src/compositor.h`; the 9th is refused with "too many layers"), confirmed on the car with the calibration grid's L1..L16 probe on Nov 5 2026. `BENCH_LAYER_CAP=8 node bench/server.js` models it, or set the "layer cap" number in the header (POST `/cap`; 0 = unlimited, the default). Layers past the cap, counted per connection in order of arrival across all targets and kinds (a `drop` frees a slot), get the event `{ ev: 'layer', ref, state: 'waiting', reason: 'bench: over the layer cap of N' }` instead of `shown`, are not drawn, and show in red in the layers table. Changing the cap restarts the app so it registers its layers again; the log says so. The `status` op reply includes the cap and how many layers are over it. The cap is per connection: an app that opens a second socket gets another 8 (hud.js `"conn"`), and the layers table shows each layer as connection:ref.
+
+**Slow pixels:** `BENCH_STALL_MS=7000` makes every image layer report `stalled` (cluster-render's state until its first pixels are uploaded) for that long, then `shown`. Under 5 s the apps log nothing; past it they warn once per layer and log when it shows.
+
+**Shader budget:** every effect layer is checked when it's made (`tools/shader_budget.js`, ported from james10424's idrive7-custom, MIT): texture reads, tokens, uniform vectors and loop load against shaders that ran or failed on cars. Past a known mark the bench log warns. `node tools/shader_budget.js --all` lists every built-in layout's effect layers at their real size; it exits 1 if one reaches a crash mark. With glslangValidator installed (`brew install glslang`) it also compiles each shader.
+
+**Service limits always on:** 32 layers across every connection (`CompositorLimits.layers`; the 33rd is refused with "too many layers") and 16 MiB of pixel memory for every image together, each image counted twice (`Compositor::add_image`; refused with the service's own words "the service's pixel memory is full"). `BENCH_PIXEL_MIB=4` lowers it to try a refusal, 0 turns it off. The header shows the pixel memory in use; the `status` op reply names both. Assets too: the `asset` op (R8 or RGBA8, 1..2048 a side, 32 in all and 16 per connection, "too many assets"; pixel memory twice its bytes) and `bind` (an effect layer's `sampler2D` reads the asset; the page uploads its pixels as a WebGL texture, an R8 byte in `.r`). Assets are listed in the layers table as "asset r8 WxH (not drawn)" and never count toward the layer caps; a `drop` of one still bound is refused with "asset in use".
+
+**Array uniforms:** a `uniform` message with a `type` (`float`, `vec2`, `vec3`, `vec4`, `mat4`) may carry up to 1024 numbers, whole elements of that type (PROTOCOL.md "Uniforms"). The server keeps the type and refuses a count that is not whole elements; the page uploads the whole array with `uniform1fv`/`2fv`/`3fv`/`4fv` or `uniformMatrix4fv`, sized by the shader's own `getActiveUniform` size (an array shows up as `name[0]`, and is looked up by either spelling). Numbers past the shader's array are ignored with one warning in the log. Self-test: connect a second client to the bench socket (the log prints its path), register an effect layer whose shader declares `uniform vec4 u_box[12];` and draws a box per element, and send `cr.uniform(ref, 'u_box', nums, { type: 'vec4' })` with 48 numbers: all 12 boxes must show. Verified Nov 5 2026.
+
+**Pixels:** the event stream carries only a notice per changed rect (`{t:'px', key, x, y, w, h}`); the page fetches the bytes from `GET /px?key=&x=&y=&w=&h=` (raw RGBA rows, the layer's current pixels). Pixels used to ride the stream as base64, and once the engine packed text into 1 MB sheets the page stalled on them (Nov 5 2026). The page reads the stream with `fetch` and a stream reader, not `EventSource`.
+
+**URL options:** `?clean=1` hides the layer outlines. `?only=1` shows just the display at 1:1, for screenshots. `?backdrop=1` starts with the backdrop on. `?car=0` starts with the car view off. `?dbg=1` prints the page's message, pixel-fetch and stream-read counters in the corner of the display (for chasing a stuck page).
+
+**Screenshots from headless Chrome:** a page that joins a running bench first fetches every layer's pixels, and with `--timeout=N` Chrome shot before those fetches landed, so static layers (the grid labels, the L row) came out blank while the layers table said shown. Use a virtual-time budget instead; it lets the fetches settle before the shot:
+
+```
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --use-angle=swiftshader --enable-unsafe-swiftshader \
+  --virtual-time-budget=20000 --window-size=1920,720 --screenshot=out.png "http://localhost:8078/?only=1&backdrop=1&clean=1"
+```
+
+(800x480 for the HUD.) `?dbg=1` shows whether it worked: `images N px N` means every image layer's pixels arrived.

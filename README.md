@@ -11,11 +11,17 @@ from this repository: no BMW SDK leaves the car, and none is in this repository.
 | App | Id | What it does |
 |---|---|---|
 | **Flex Fuel** | `perea_mhd_flex` | The ethanol content an **MHD-flashed DME** runs on, as two dials: *Ethanol Content (Active)*, what the tune uses, and *Ethanol Content (CAN)*, what the flex fuel sensor reports; a third dial with the fuel in the tank (gallons and litres) and a **blend calculator**: how much ethanol to add to reach a target. Read-only over the car's own diagnostic link. Flags a map that ignores the sensor and a mismatch between the two. Details, protocol and how to add your ROM: [apps/perea_mhd_flex/README.md](apps/perea_mhd_flex/README.md). |
+| **Cluster Themes** | `perea_cluster_themes` | Redraws the whole **instrument cluster** in a theme of your choice (GT3 race dash, M, M view, Vector, Sport, Minimal, Track, Drag, Rally, Retro 80s, Cruise, Dyno, Ribbon), picked on the centre screen or by drive mode. **iDrive 7 only**, and it draws through [cluster-render](https://github.com/robertnisipeanu/idrive-apps) (0.5.1 or newer), which must be installed first. A copy of [bimmer-lab](https://github.com/bimmer-lab/apps)'s app (0.19.0, MIT), kept here. Themes, settings and what is verified on a car: [apps/perea_cluster_themes/README.md](apps/perea_cluster_themes/README.md); working on it: [docs/cluster-themes.md](docs/cluster-themes.md). |
 
 ![Flex Fuel](docs/screens/perea_mhd_flex.png)
 
 > **Experimental.** Flex Fuel's addresses were captured on one MHD ROM; on any other it says
 > *ROM not supported* and sends no read. Use at your own risk, on your own car.
+
+![Cluster Themes, GT3](docs/images/cluster-gt3.png)
+
+> **Cluster Themes draws over BMW's own cluster.** Its readouts are for information only: follow
+> BMW's own warnings, and pick *Off* in the app to get BMW's cluster back. It only reads from the car.
 
 ## Head units
 
@@ -44,9 +50,13 @@ iDrive 8 description as a bare host state, without the note and marker labels.
 
 ## Install
 
-The apps need a renderer on the head unit (`needs: ["renderer"]` in `mgu-repo.json`): the
+Flex Fuel needs a renderer on the head unit (`needs: ["renderer"]` in `mgu-repo.json`): the
 Store's own Renderer, or `idrive7-renderd` if you already have it. The Store says so and offers
 one when none is installed.
+
+Cluster Themes needs **cluster-render** instead (0.5.1 or newer), which the Store cannot offer by
+itself: add the source `robertnisipeanu/idrive-apps` and install *Cluster renderer* from it first.
+The app is listed for iDrive 7 only (its own entry in `mgu-repo.json`).
 
 **A. From GitHub, in the Store.** Settings → **Add source** → `alexpereap/pereaperformance-idrive7-apps`,
 following the **main** branch. The apps appear in the Store's list; pick one and install. The
@@ -99,6 +109,8 @@ node kit/tools/emu.js perea_mhd_flex                                  # the app 
 node kit/tools/test_mhd_flex.js                                       # the app: protocol, states, screen, main
 node kit/tools/test_runtime.js                                        # the kit: display, renderer client, settings sheet
 node kit/tools/test_locales.js                                        # every language: catalogs, labels, glyphs
+node kit/tools/test_cluster_themes.js                                 # Cluster Themes: staged, started, its default theme on a stand-in cluster-render
+node bench/server.js                                                  # Cluster Themes' cluster in the browser: http://localhost:8078 (bench/README.md)
 ```
 
 `build.py` with no app id builds every app in `apps/`.
@@ -112,16 +124,21 @@ node kit/tools/test_locales.js                                        # every la
 2. `apps/<id>/icon.png` (the Store shows it; 128 KiB at most):
    `node kit/tools/make_icon.js <glyph> apps/<id>/icon.png`.
 3. Its test in `kit/tools/`, run from `.github/workflows/tests.yml`.
-4. Nothing to change in `mgu-repo.json`: every folder in `apps/` with an `app.json` is an app.
-   A kit module the app needs that is not here yet (`car.js`, `dids.js`, ...) is taken from
-   upstream idrive7-apps, with its notice.
+4. Nothing to change in `mgu-repo.json`: every folder in `apps/` with an `app.json` is an app,
+   for iDrive 7 and 8, needing a renderer. An app that differs (Cluster Themes: iDrive 7 only, no
+   renderer needed) is named in the pattern's `exclude` and has its own entry under `components`.
+   A kit module the app needs that is not here yet is taken from upstream idrive7-apps, with its
+   notice. Code more than one app can use goes in `shared/`; an app names the files it needs in
+   `app.json` `"shared"` and the build copies them in.
 
 ## Translations
 
 The packages are fixed-language: English, or Korean (`ko`), Russian (`ru`), Chinese (`zh-CN`)
 with `--language`. The catalogs are `kit/runtime/locales/<lang>.tsv` (`English<TAB>translation`,
 the key is the exact English text; every `app.json` label with a space must have a row) and
-hold only the rows the apps here show.
+hold only the rows the apps here show. An app in English only says so in `app.json`
+(`"locales": ["en"]`, Cluster Themes): its labels need no rows, and a package of it in another
+language shows them in English.
 
 1. Add the rows to the three TSVs, then `python3 kit/tools/sync_locales.py` (writes the JSON).
 2. `python3 kit/tools/prune_locales.py --check` must pass (a row nothing shows is refused;
@@ -144,4 +161,7 @@ hold only the rows the apps here show.
   (Fieldistor) and the Korean by jaimeen shim. Fonts under the Ubuntu Font Licence and the SIL
   OFL; the emulator's draw engine (mgu-render) GPL-3.0-or-later, source included. All of it in
   `THIRD_PARTY_NOTICES.md`.
+- Cluster Themes (`apps/perea_cluster_themes`, `shared/`, `bench/`, `tools/`, `scripts/`): MIT,
+  Copyright (c) 2026 bimmer-lab; `shared/cluster_render_client.js` MPL-2.0, Copyright (C) 2026
+  Robert Nisipeanu; its fonts under the SIL OFL. In `THIRD_PARTY_NOTICES.md` and the app's `NOTICE`.
 - BMW's SDK and the `.mgu` / `.tgz` packages that contain it are never published.

@@ -631,6 +631,15 @@ def build(app_id, language='en', preview_only=False, hmi=None):
             # a committed pack (e.g. dtc_scanner/dtc_db.pack); a local folder of the same name replaces it
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', f))
             print('  %s (committed)' % f)
+    # app.json "shared" names .js files in the repository's shared/ folder (code more than one app can use:
+    # the cluster-render drawing engine, from bimmer-lab/apps); they ship next to the app's own .js, and an
+    # app's own file of the same name wins.
+    for f in spec.get('shared', []):
+        sp = os.path.join(ROOT, 'shared', f)
+        if not f.endswith('.js') or os.path.basename(f) != f or not os.path.isfile(sp):
+            raise SystemExit('%s: app.json "shared" lists %r, which is not a .js file in shared/' % (app_id, f))
+        if not os.path.exists(os.path.join(adir, f)):
+            shutil.copy(sp, os.path.join(src, 'javascript', f))
     # kit runtime
     kr = os.path.join(KIT, 'runtime')
     for f in os.listdir(kr):

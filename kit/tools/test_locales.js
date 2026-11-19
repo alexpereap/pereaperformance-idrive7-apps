@@ -2,7 +2,7 @@
 // Every language the kit ships (kit/runtime/locales/*.tsv) for every app in apps/: build it with
 // --preview-only --language <lang>, then check that (1) the JSON catalog is what sync_locales.py makes
 // of the TSV and is what the stage's locale.json carries, (2) every app.json label with a space has a
-// row, (3) every character of every translation (and of the credit) has a glyph in the atlas the
+// row (an app that says which languages it is in, app.json "locales": ["en"], is checked in those only), (3) every character of every translation (and of the credit) has a glyph in the atlas the
 // runtime picks for that text, (4) the staged atlases fit the renderer's GPU budget. No SDK needed:
 //   node kit/tools/test_locales.js
 const assert = require('assert');
@@ -46,7 +46,8 @@ for (const lang of ['en'].concat(langs)) {
         assert.deepStrictEqual(locale.strings, catalog, lang + '/' + id + ': the stage carries another catalog');
         if (lang !== 'en') {
             const spec = JSON.parse(fs.readFileSync(path.join(root, 'apps', id, 'app.json'), 'utf8'));
-            for (const label of labelsOf(spec)) {
+            // (an app in English only, e.g. perea_cluster_themes: its own page draws English text)
+            for (const label of Array.isArray(spec.locales) && spec.locales.indexOf(lang) < 0 ? [] : labelsOf(spec)) {
                 if (label.includes(' ') && /[A-Za-z]{2,}/.test(label) && !/^\d/.test(label)) {
                     assert.ok(Object.prototype.hasOwnProperty.call(catalog, label), lang + '/' + id + ': untranslated menu label "' + label + '"');
                 }

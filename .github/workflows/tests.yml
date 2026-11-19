@@ -25,4 +25,8 @@ jobs:
           git diff --exit-code -- kit/runtime/locales
           python3 kit/tools/prune_locales.py --check
       - run: node kit/tools/test_locales.js
+      - name: Cluster Themes - staged with its shared engine, started, its default theme on a stand-in cluster-render
+        run: node kit/tools/test_cluster_themes.js
+      - name: Cluster Themes - no effect shader reaches a mark that crashed a cluster
+        run: node tools/shader_budget.js
       - run: python3 kit/tools/build.py --preview-only

@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Display Bench</title>
+<style>
+  :root {
+    --bg: #0d0f12; --panel: #161a20; --line: #262c35; --text: #d8dde4; --dim: #8a94a3;
+    --accent: #4fa3ff; --warn: #f0b429; --err: #ff6b6b; --ok: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .pill { padding: 2px 8px; border-radius: 999px; background: var(--line); color: var(--dim); font-size: 12px; }
+  .pill.ok { background: rgba(62,207,142,.15); color: var(--ok); }
+  .pill.bad { background: rgba(255,107,107,.15); color: var(--err); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .stage { background: #000; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .stage .bar { display: flex; gap: 14px; align-items: center; color: var(--dim); margin-bottom: 8px; flex-wrap: wrap; }
+  canvas#hud { width: 100%; height: auto; display: block; background: #000; border-radius: 4px; }
+  .note { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  aside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 10px; font-weight: 600; }
+  .row { display: grid; grid-template-columns: 70px 1fr 56px; gap: 8px; align-items: center; margin: 6px 0; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  select, button { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover, select:hover { border-color: var(--accent); }
+  .seg { display: flex; gap: 6px; margin-bottom: 8px; }
+  .seg button.on { border-color: var(--accent); color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  #log { grid-column: 1 / -1; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; height: 220px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+  #log .warn { color: var(--warn); } #log .error { color: var(--err); }
+  tr.waiting td { color: var(--err); }
+  td.flag { color: var(--warn); white-space: nowrap; }
+  input[type=number] { width: 64px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; }
+  body.only header, body.only aside, body.only #log, body.only .bar, body.only .note { display: none; }
+  body.only main { display: block; padding: 0; } body.only .stage { padding: 0; border: 0; border-radius: 0; }
+  body.only canvas#hud { width: auto; border-radius: 0; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .srow { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+  .srow select { max-width: 170px; }
+  .status { font-size: 13px; padding: 8px 10px; margin: 4px 0 10px; border-radius: 6px; background: rgba(127,127,127,.12); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Bench</h1>
+  <span id="appState" class="pill">app: ?</span>
+  <span id="conn" class="pill">page: connecting</span>
+  <span class="pill" id="target">target: ?</span>
+  <span class="pill" id="pixels" title="cluster-render's pixel memory: 16 MiB for every image of every app together, each image counted twice">pixels: ?</span>
+  <button id="restart">Restart app</button>
+  <label class="chk" title="The car seems to draw only an app's first 8 layers. Layers past the cap get state waiting and are not drawn; 0 = unlimited. Changing it restarts the app."><span>layer cap</span> <input type="number" id="cap" min="0" max="64" step="1" value="0"></label>
+</header>
+<main>
+  <div class="stage">
+    <div class="bar">
+      <label class="chk"><input type="checkbox" id="outlines" checked> layer outlines</label>
+      <label class="chk"><input type="checkbox" id="road"> <span id="backdropName">backdrop</span></label>
+      <label class="chk" title="What the driver sees: the hood hides the top corners of the cluster and BMW draws its gear box and belt light over us; on the HUD only a window is visible through the windshield. Measured from car photos, Nov 5 2026 (shared/visible.js)."><input type="checkbox" id="carview" checked> car view</label>
+      <span id="fps"></span>
+    </div>
+    <canvas id="hud" width="800" height="480"></canvas>
+    <div class="note" id="stageNote">Pixels are the app's own: image layers are its raw RGBA pushes, gauges run its real GLSL shader in WebGL. Brightness, color and blur on the real display will differ; only the car shows that.</div>
+  </div>
+  <aside>
+    <section>
+      <h2>Center screen</h2>
+      <div id="status" class="status">status: waiting for the app</div>
+      <div id="settings"></div>
+      <div class="note">The app's page on the car's center screen: the status row, then the settings. A change here is pressed on the kit's stand-in HMI, the same way the car's drop-downs and checkboxes send it, and saved in bench/.data/&lt;app id&gt;/settings.json. A layout file saved into bench/.data/&lt;app id&gt;/layouts/ overrides the built-in one of that name, and the app reloads it by itself.</div>
+    </section>
+    <section>
+      <h2>Vehicle signals</h2>
+      <div class="seg"><button id="mDemo" class="on">Demo drive</button><button id="mManual">Manual</button></div>
+      <div class="seg" id="drive" title="The drive mode buttons: FES statusFESVehicleDynamicSwitchHMI"><button data-v="" class="on">Mode not sent</button><button data-v="4">COMFORT</button><button data-v="1">SPORT</button><button data-v="2">SPORT+</button><button data-v="7">ECO PRO</button></div>
+      <div id="sliders"></div>
+      <div class="note" id="sigNote">Demo drive is the kit's simulator (sim.js). It has no boost signal, so boost reads "--" here, as on a car that does not fill that field.</div>
+    </section>
+    <section>
+      <h2>Layers</h2>
+      <table><thead><tr><th>conn:ref</th><th>kind</th><th>class/z</th><th>rect</th><th>car</th></tr></thead><tbody id="layers"></tbody></table>
+      <div class="note">conn: the app's connection to cluster-render (1 is its own; a layout's "conn" widgets open more, each with its own 8 layers). Red: over the layer cap, state waiting, not drawn. The car column flags a layer the driver can't fully see (hood, BMW's gear box or belt light, outside the HUD window); hover for the reason.</div>
+    </section>
+  </aside>
+  <div id="log"></div>
+</main>
+<script>
+(function () {
+  'use strict';
+  const CLASS_ORDER = { ambient: 0, content: 1, overlay: 2, alert: 3 };
+  const SIGNALS = [
+    ['rpm', 0, 8000, 50, 900], ['speed', 0, 250, 1, 0], ['oil', -20, 150, 1, 95], ['coolant', -20, 130, 1, 90],
+    ['boost', 0, 2.5, 0.05, 0], ['gear', 0, 8, 1, 1], ['gLong', -1.5, 1.5, 0.05, 0], ['gLat', -1.5, 1.5, 0.05, 0],
+    ['fuelL', 0, 65, 1, 40], ['range', 0, 800, 5, 450], ['ambient', -20, 45, 1, 22],
+  ];
+  const canvas = document.getElementById('hud');
+  const ctx = canvas.getContext('2d');
+  const logEl = document.getElementById('log');
+  let scene = [];
+  const images = new Map();     // key -> canvas holding the layer's pixels
+  let dirty = true;
+
+  /* ---------- WebGL for effect layers: the app's real fragment shader ---------- */
+  const glCanvas = document.createElement('canvas');
+  const gl = glCanvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true, alpha: true });
+  const VS = 'attribute vec2 a_pos; varying vec2 v_uv; void main(){ v_uv = vec2(a_pos.x * 0.5 + 0.5, 0.5 - a_pos.y * 0.5);  /* top-left, as cluster-render */ gl_Position = vec4(a_pos, 0.0, 1.0); }';
+  const programs = new Map();   // fs source -> {prog, err}
+  const shaderErrors = new Set();
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+  function compile(fs) {
+    if (programs.has(fs)) return programs.get(fs);
+    const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+    const v = mk(gl.VERTEX_SHADER, VS), f = mk(gl.FRAGMENT_SHADER, fs);
+    const p = gl.createProgram(); gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
+    let entry;
+    if (!gl.getShaderParameter(f, gl.COMPILE_STATUS)) entry = { err: 'fragment shader does not compile: ' + gl.getShaderInfoLog(f) };
+    else if (!gl.getProgramParameter(p, gl.LINK_STATUS)) entry = { err: 'shader does not link: ' + gl.getProgramInfoLog(p) };
+    else entry = { prog: p };
+    programs.set(fs, entry);
+    return entry;
+  }
+
+  // asset key -> { tex, stamp }: the WebGL texture of an asset's pixels, uploaded again when the canvas changed
+  const textures = new Map();
+  function textureOf(key, c) {
+    let t = textures.get(key);
+    if (!t) { t = { tex: gl.createTexture(), stamp: -1 }; textures.set(key, t); }
+    gl.bindTexture(gl.TEXTURE_2D, t.tex);
+    if (t.stamp !== (c.stamp || 0)) {
+      t.stamp = c.stamp || 0;
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+    return t.tex;
+  }
+  const uniformNotes = new Set();
+  function noteUniform(l, name, why) {
+    const k = l.key + ':' + name + ':' + why;
+    if (uniformNotes.has(k)) return;
+    uniformNotes.add(k); addLog({ level: 'warn', text: 'bench: layer ' + l.ref + ' uniform ' + name + ': ' + why });
+  }
+  function drawEffect(l, t) {
+    const e = compile(l.fs);
+    if (e.err) {
+      if (!shaderErrors.has(l.key)) { shaderErrors.add(l.key); addLog({ level: 'error', text: 'bench: layer ' + l.ref + ' ' + e.err }); }
+      return null;
+    }
+    glCanvas.width = Math.max(1, l.w); glCanvas.height = Math.max(1, l.h);
+    gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(e.prog);
+    const loc = gl.getAttribLocation(e.prog, 'a_pos');
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const n = gl.getProgramParameter(e.prog, gl.ACTIVE_UNIFORMS);
+    let unit = 0;
+    for (let i = 0; i < n; i++) {
+      const info = gl.getActiveUniform(e.prog, i);
+      if (info.type === gl.SAMPLER_2D) {
+        // a sampler reads the asset bound to it (the 'bind' op); its pixels came as an image, R in .r
+        const key = l.binds && l.binds[info.name], c = key && images.get(key);
+        const u = gl.getUniformLocation(e.prog, info.name);
+        if (!c || !u) { if (!c) noteUniform(l, info.name, 'no asset bound'); continue; }
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, textureOf(key, c));
+        gl.uniform1i(u, unit++);
+        continue;
+      }
+      // An array uniform is reported as "name[0]" with size > 1; the client sets it by its base name
+      // (PROTOCOL.md "Uniforms": one 'uniform' message of type x size numbers). Either spelling is accepted.
+      const base = info.name.replace(/\[0\]$/, '');
+      const u = gl.getUniformLocation(e.prog, info.name) || gl.getUniformLocation(e.prog, base);
+      let entry = l.uniforms[base] || l.uniforms[info.name];
+      let v = entry ? entry.v : null;
+      if (info.name === 'u_time' && l.time) v = [t / 1000];
+      if (!v || !u) continue;
+      const width = { [gl.FLOAT]: 1, [gl.FLOAT_VEC2]: 2, [gl.FLOAT_VEC3]: 3, [gl.FLOAT_VEC4]: 4, [gl.FLOAT_MAT4]: 16 }[info.type];
+      if (!width) continue;
+      const count = Math.min(info.size, Math.floor(v.length / width));   // whole elements only, up to the shader's array size
+      if (count < 1) { noteUniform(l, info.name, v.length + ' numbers do not fill one element of width ' + width); continue; }
+      if (entry && entry.v.length > width * info.size) noteUniform(l, info.name, entry.v.length + ' numbers sent, shader holds ' + info.size + ' x ' + width + '; extra ignored');
+      const vals = new Float32Array(v.slice(0, count * width));
+      if (info.type === gl.FLOAT) gl.uniform1fv(u, vals);
+      else if (info.type === gl.FLOAT_VEC2) gl.uniform2fv(u, vals);
+      else if (info.type === gl.FLOAT_VEC3) gl.uniform3fv(u, vals);
+      else if (info.type === gl.FLOAT_VEC4) gl.uniform4fv(u, vals);
+      else if (info.type === gl.FLOAT_MAT4) gl.uniformMatrix4fv(u, false, vals);
+    }
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    return glCanvas;
+  }
+
+  /* ---------- compositing ---------- */
+  // view: the target the app draws on (its app.json config.target), from the server's hello
+  let view = 'hud', VW = 800, VH = 480;
+  // what the driver sees, from the server's hello (shared/visible.js, measured from car photos Nov 5 2026)
+  let geo = null;
+  let settingVals = {};            // the app's settings as last sent (the car view's camera notch follows one)
+  function hoodY(x) {
+    const H = geo.HOOD;
+    if (x <= H[0][0]) return H[0][1];
+    for (let i = 1; i < H.length; i++) { const a = H[i - 1], b = H[i]; if (x <= b[0]) return a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); }
+    return H[H.length - 1][1];
+  }
+  function labelBox(text, x, y, color) {
+    ctx.font = '12px ui-monospace, Menlo, monospace';
+    const w = ctx.measureText(text).width + 8;
+    ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(x, y, w, 16);
+    ctx.fillStyle = color; ctx.fillText(text, x + 4, y + 12);
+  }
+  // The car view: the parts of the target the driver can't see, drawn over the composited layers.
+  function drawCarView() {
+    if (!geo) return;
+    if (view === 'panel') {
+      // the hood: everything above the curve is hidden (a dark mask), the curve itself in orange
+      ctx.beginPath(); ctx.moveTo(0, 0);
+      geo.HOOD.forEach(([x, y]) => ctx.lineTo(x, y));
+      ctx.lineTo(VW, hoodY(VW)); ctx.lineTo(VW, 0); ctx.closePath();
+      ctx.fillStyle = 'rgba(8,8,10,.78)'; ctx.fill();
+      ctx.beginPath(); geo.HOOD.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.lineTo(VW, hoodY(VW));
+      ctx.strokeStyle = '#ff8c1a'; ctx.lineWidth = 1.5; ctx.stroke();
+      labelBox('hood (hidden above the line)', 150, 60, '#ff8c1a');   // inside the masked corner (hoodY(150) is 111)
+      // the seat-belt warning light
+      const [sx0, sy0, sx1, sy1] = geo.BELT;
+      ctx.fillStyle = 'rgba(232,55,44,.55)'; ctx.fillRect(sx0, sy0, sx1 - sx0, sy1 - sy0);
+      ctx.strokeStyle = '#ff8c1a'; ctx.strokeRect(sx0 + .5, sy0 + .5, sx1 - sx0 - 1, sy1 - sy0 - 1);
+      labelBox('belt light', sx0 - 10, sy0 - 18, '#ff8c1a');
+      // the driver camera on newer cars (where the model badge sits on cars without it): solid while the app's
+      // "Leave room for the driver camera" is on, so the bench shows what those drivers see; else only outlined
+      if (geo.CAMERA) {
+        const [cx0, cy0, cx1, cy1] = geo.CAMERA;
+        if (settingVals.cameraNotch === true) { ctx.fillStyle = '#000'; ctx.fillRect(cx0, cy0, cx1 - cx0, cy1 - cy0); }
+        ctx.setLineDash([5, 4]); ctx.strokeStyle = '#ff8c1a'; ctx.strokeRect(cx0 + .5, cy0 + .5, cx1 - cx0 - 1, cy1 - cy0 - 1); ctx.setLineDash([]);
+        labelBox('driver camera (newer cars)', cx0 + 4, cy1 + 4, '#ff8c1a');
+      }
+    } else if (view === 'hud') {
+      // only the window is visible through the windshield; mask the rest
+      const w = geo.HUD_WINDOW;
+      ctx.fillStyle = 'rgba(8,8,10,.78)';
+      ctx.fillRect(0, 0, VW, w.y); ctx.fillRect(0, w.y + w.h, VW, VH - w.y - w.h);
+      ctx.fillRect(0, w.y, w.x, w.h); ctx.fillRect(w.x + w.w, w.y, VW - w.x - w.w, w.h);
+      ctx.strokeStyle = '#ff8c1a'; ctx.lineWidth = 1.5; ctx.strokeRect(w.x + .5, w.y + .5, w.w - 1, w.h - 1);
+      labelBox('visible window ' + w.x + ',' + w.y + ' ' + w.w + 'x' + w.h, w.x + 2, w.y + w.h - 18, '#ff8c1a');
+      // BMW's own speed, speed-limit sign and (Sport) rev band draw over ours here
+      if (geo.HUD_BMW) {
+        const [bx0, by0, bx1, by1] = geo.HUD_BMW;
+        ctx.setLineDash([5, 4]); ctx.strokeStyle = '#ff8c1a'; ctx.strokeRect(bx0 + .5, by0 + .5, bx1 - bx0 - 1, by1 - by0 - 1); ctx.setLineDash([]);
+        labelBox("BMW speed / Sport band", bx0 + 4, by0 + 4, '#ff8c1a');
+      }
+    }
+  }
+  function setView(v, targets) {
+    view = v; VW = targets[v][0]; VH = targets[v][1];
+    canvas.width = VW; canvas.height = VH;
+    document.getElementById('target').textContent = 'target: ' + v + ' ' + VW + ' x ' + VH;
+    document.getElementById('backdropName').textContent = v === 'panel' ? 'stock cluster backdrop' : 'road backdrop';
+    if (v === 'panel') document.getElementById('stageNote').textContent = 'The whole instrument cluster. The backdrop stands in for BMW\'s own gauges and the map window under our layers; the map window is where it sat on the X3. Anything the app draws opaque covers them, as it would on the car.';
+    dirty = true;
+  }
+  function drawRoad() {
+    const g = ctx.createLinearGradient(0, 0, 0, 480);
+    g.addColorStop(0, '#2a3340'); g.addColorStop(0.45, '#56606b'); g.addColorStop(0.46, '#2b2d30'); g.addColorStop(1, '#151618');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 800, 480);
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 4; ctx.setLineDash([30, 30]);
+    ctx.beginPath(); ctx.moveTo(400, 222); ctx.lineTo(400, 480); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // a rough stand-in for BMW's own cluster: two angular gauges and the map window (416,120 1088x480, from the car photo of Nov 4)
+  function drawStockCluster() {
+    ctx.fillStyle = '#05070a'; ctx.fillRect(0, 0, VW, VH);
+    ctx.fillStyle = '#1d3b5c'; ctx.fillRect(416, 120, 1088, 480);
+    ctx.strokeStyle = '#2c5a8a'; ctx.lineWidth = 3;
+    for (let i = 0; i < 9; i++) { ctx.beginPath(); ctx.moveTo(416 + i * 136, 120); ctx.lineTo(416 + i * 136, 600); ctx.stroke(); }
+    ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.font = '28px sans-serif'; ctx.fillText('map window', 860, 370);
+    [[210, 1], [1710, -1]].forEach(([cx, side]) => {
+      ctx.strokeStyle = '#c9ced6'; ctx.lineWidth = 6; ctx.beginPath();
+      ctx.moveTo(cx - 120 * side, 60); ctx.lineTo(cx + 60 * side, 60); ctx.lineTo(cx + 150 * side, 360); ctx.lineTo(cx + 60 * side, 640); ctx.lineTo(cx - 120 * side, 640); ctx.stroke();
+      ctx.strokeStyle = '#e8372c'; ctx.lineWidth = 18; ctx.beginPath(); ctx.moveTo(cx + 100 * side, 200); ctx.lineTo(cx + 140 * side, 340); ctx.stroke();
+    });
+    ctx.fillStyle = '#f2c94c'; ctx.beginPath(); ctx.arc(70, 640, 14, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e8372c'; ctx.beginPath(); ctx.arc(1850, 640, 14, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.font = '20px sans-serif'; ctx.fillText('warning lights', 20, 615); ctx.fillText('warning lights', 1770, 615);
+    // BMW's own bottom strip (y ~662..720; car photo Nov 13 2026 with "Leave BMW's bottom strip clear" on): range, clock,
+    // the street, the drive mode, the gear letter, outside temperature. It sits UNDER our layers: a theme drawn over it hides it.
+    ctx.fillStyle = 'rgba(235,238,242,.8)'; ctx.font = '30px sans-serif';
+    [['138 mi', 180], ['4:24 pm', 355], ['Main St', 860], ['COMFORT', 1180], ['P', 1372], ['+54 \u00b0F', 1475]].forEach(([t, x]) => ctx.fillText(t, x, 700));
+  }
+
+  // ?clean=1: no outlines, for screenshots
+  // ?only=1: just the target at 1:1 (800x480 HUD, 1920x720 cluster), nothing else
+  // ?backdrop=1: start with the backdrop on
+  // ?car=0: start with the car view (hood, gear box, belt light, HUD window) off
+  if (/[?&](clean|only)=1/.test(location.search)) document.getElementById('outlines').checked = false;
+  if (/[?&]only=1/.test(location.search)) document.body.classList.add('only');
+  if (/[?&]backdrop=1/.test(location.search)) document.getElementById('road').checked = true;
+  if (/[?&]car=0/.test(location.search)) document.getElementById('carview').checked = false;
+  let frames = 0, lastFpsT = performance.now();
+  function frame(t) {
+    const animated = scene.some((l) => l.kind === 'effect' && l.time);
+    if (dirty || animated) {
+      dirty = false;
+      ctx.clearRect(0, 0, VW, VH);
+      if (document.getElementById('road').checked) (view === 'panel' ? drawStockCluster : drawRoad)();
+      // a layer over the layer cap (state waiting) is never drawn, as on the car
+      const hud = scene.filter((l) => l.target === view && l.visible && l.state !== 'waiting' && l.kind !== 'asset')
+        .sort((a, b) => (CLASS_ORDER[a.class] - CLASS_ORDER[b.class]) || (a.z - b.z));
+      let start = 0;
+      hud.forEach((l, i) => { if (l.exclusive) start = i; });
+      hud.slice(start).forEach((l) => {
+        ctx.globalAlpha = l.opacity === undefined ? 1 : l.opacity;
+        // cluster-render's scale and rotation about the layer's pivot (px, py from its top-left; default its centre)
+        const sx = l.sx === undefined ? 1 : l.sx, sy = l.sy === undefined ? 1 : l.sy, rot = l.rotate || 0;
+        if (sx !== 1 || sy !== 1 || rot) {
+          const pvx = l.x + (l.px === undefined ? l.w / 2 : l.px), pvy = l.y + (l.py === undefined ? l.h / 2 : l.py);
+          ctx.save(); ctx.translate(pvx, pvy); ctx.rotate(rot * Math.PI / 180); ctx.scale(sx, sy); ctx.translate(-pvx, -pvy);
+        }
+        if (l.kind === 'image') { const c = images.get(l.key); if (c) ctx.drawImage(c, l.x, l.y, l.w, l.h); }
+        else if (l.kind === 'effect') { const c = drawEffect(l, t); if (c) ctx.drawImage(c, l.x, l.y, l.w, l.h); }
+        if (sx !== 1 || sy !== 1 || rot) ctx.restore();
+        ctx.globalAlpha = 1;
+      });
+      if (document.getElementById('outlines').checked) {
+        ctx.font = '11px ui-monospace, Menlo, monospace';
+        hud.forEach((l) => {
+          ctx.strokeStyle = 'rgba(79,163,255,.55)'; ctx.lineWidth = 1; ctx.strokeRect(l.x + .5, l.y + .5, l.w - 1, l.h - 1);
+          ctx.fillStyle = 'rgba(79,163,255,.8)'; ctx.fillText('#' + l.conn + ':' + l.ref + ' ' + l.kind, l.x + 2, l.y - 3 < 9 ? l.y + l.h + 11 : l.y - 3);
+        });
+      }
+      if (document.getElementById('carview').checked) drawCarView();
+      if (/[?&]dbg=1/.test(location.search)) { ctx.fillStyle = '#ff0'; ctx.font = '20px monospace'; ctx.fillText('msgs ' + dbgN + ' last ' + dbgLast + ' images ' + images.size + ' px ' + dbgPx + ' reads ' + dbgReads + ' buf ' + dbgBuf + ' err ' + dbgErr, 20, VH - 20); }
+      frames++;
+    }
+    if (t - lastFpsT > 1000) { document.getElementById('fps').textContent = frames + ' redraws/s'; frames = 0; lastFpsT = t; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  ['outlines', 'road', 'carview'].forEach((id) => document.getElementById(id).addEventListener('change', () => { dirty = true; }));
+  const capEl = document.getElementById('cap');
+  capEl.addEventListener('change', () => fetch('/cap', { method: 'POST', body: JSON.stringify({ cap: Number(capEl.value) || 0 }) }));
+
+  /* ---------- server events ---------- */
+  function addLog(e) {
+    const div = document.createElement('div');
+    div.className = e.level; div.textContent = e.text;
+    const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
+    logEl.appendChild(div);
+    while (logEl.childNodes.length > 500) logEl.removeChild(logEl.firstChild);
+    if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  function renderLayerTable() {
+    const firstConn = scene.length ? Math.min.apply(null, scene.map((l) => l.conn)) : 1;   // the app's own connection reads as 1
+    document.getElementById('layers').innerHTML = scene.map((l) => {
+      const warns = l.warnings || [];
+      const flag = warns.length ? '<td class="flag" title="' + esc(warns.join('\n')) + '">' + (warns.some((w) => /hood/.test(w)) ? 'hood ' : '') + (warns.some((w) => /gear box/.test(w)) ? 'box ' : '') + (warns.some((w) => /belt/.test(w)) ? 'belt ' : '') + (warns.some((w) => /HUD window/.test(w)) ? 'window' : '') + '</td>' : '<td></td>';
+      const cls = l.state === 'waiting' ? ' class="waiting" title="' + esc(l.reason || 'waiting') + '"' : '';
+      const what = l.kind === 'asset' ? 'asset ' + l.format : l.kind, where = l.kind === 'asset' ? l.w + 'x' + l.h + ' (not drawn)' : l.x + ',' + l.y + ' ' + l.w + 'x' + l.h;
+      return '<tr' + cls + '><td>' + (l.conn - firstConn + 1) + ':' + l.ref + (l.state === 'waiting' ? ' (waiting)' : '') + '</td><td>' + what + '</td><td>' + (l.kind === 'asset' ? '' : l.class + ' / ' + l.z) + '</td><td>' + where + '</td>' + flag + '</tr>';
+    }).join('');
+  }
+
+  let lastValues = {};
+  // The event stream is read with fetch + a stream reader, not EventSource: Chrome's EventSource silently stopped
+  // delivering after a few hundred KB of pixel messages (Nov 5 2026), with no error and the socket still open.
+  const connEl = document.getElementById('conn');
+  function setConn(text, cls) { connEl.textContent = 'page: ' + text; connEl.className = 'pill ' + cls; }
+  function onData(data) {
+    try { onMessage(JSON.parse(data)); } catch (e) { addLog({ level: 'error', text: 'bench page: ' + (e && e.message || e) + ' (' + data.slice(0, 60) + ')' }); }
+  }
+  (async function readEvents() {
+    try {
+      const res = await fetch('/events', { cache: 'no-store' });
+      if (!res.ok || !res.body) throw new Error('events: HTTP ' + res.status);
+      setConn('live', 'ok');
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        dbgReads++; dbgBuf = buf.length; dirty = true;
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const msg = buf.slice(0, i); buf = buf.slice(i + 2);
+          msg.split('\n').forEach((line) => { if (line.indexOf('data: ') === 0) onData(line.slice(6)); });
+        }
+      }
+    } catch (e) { addLog({ level: 'error', text: 'bench page: event stream: ' + (e && e.message || e) }); dbgErr = String(e && e.message || e); dirty = true; }
+    setConn('bench server gone', 'bad');
+  })();
+  let dbgN = 0, dbgLast = '', dbgReads = 0, dbgBuf = 0, dbgErr = '', dbgPx = 0, pixelCap = 16 * 1048576;
+  function onMessage(m) {
+    dbgN++; dbgLast = m.t + ':' + (m.key || '') + ':' + (m.w === undefined ? 'whole' : 'rect'); dirty = true;
+    if (m.t === 'log') addLog(m);
+    else if (m.t === 'hello') {
+      geo = m.geometry || geo;
+      pixelCap = m.pixelCap === undefined ? pixelCap : m.pixelCap;
+      if (document.activeElement !== capEl) capEl.value = m.cap || 0;
+      setView(m.view || 'hud', m.targets); document.getElementById('title').textContent = 'Bench: ' + m.app;
+    }
+    else if (m.t === 'scene') {
+      scene = m.layers;
+      if (m.pixels !== undefined) document.getElementById('pixels').textContent = 'pixels: ' + (m.pixels / 1048576).toFixed(1) + ' of ' + (pixelCap ? (pixelCap / 1048576).toFixed(0) + ' MiB' : 'unlimited');
+      const keys = new Set(scene.map((l) => l.key));
+      Array.from(images.keys()).forEach((k) => { if (!keys.has(k)) images.delete(k); });
+      renderLayerTable(); dirty = true;
+    } else if (m.t === 'px') {
+      // a rect of an image layer changed (the whole image, or a packed sheet's text update): fetch its bytes
+      let c = images.get(m.key);
+      if (!c) { c = document.createElement('canvas'); images.set(m.key, c); }
+      if (c.width !== m.iw || c.height !== m.ih) { c.width = m.iw; c.height = m.ih; }
+      fetch('/px?key=' + encodeURIComponent(m.key) + '&x=' + m.x + '&y=' + m.y + '&w=' + m.w + '&h=' + m.h, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.arrayBuffer() : null))
+        .then((buf) => {
+          if (!buf || images.get(m.key) !== c) return;
+          c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(buf), m.w, m.h), m.x, m.y);
+          c.stamp = (c.stamp || 0) + 1;
+          dbgPx++; dirty = true;
+        }).catch(() => {});
+    } else if (m.t === 'settings') {
+      renderSettings(m);
+    } else if (m.t === 'status') {
+      document.getElementById('status').textContent = m.s;
+    } else if (m.t === 'app') {
+      const a = document.getElementById('appState');
+      a.textContent = 'app: ' + m.state; a.className = 'pill ' + (m.state === 'running' ? 'ok' : 'bad');
+    } else if (m.t === 'values') {
+      lastValues = m.values;
+      if (m.mode !== mode) setMode(m.mode, true);
+      if (mode === 'demo') SIGNALS.forEach(([k]) => {
+        const v = m.values[k];
+        document.getElementById('o_' + k).textContent = v === null || v === undefined ? '--' : (Math.round(v * 10) / 10);
+        if (v !== null && v !== undefined) document.getElementById('s_' + k).value = v;
+      });
+    }
+  }
+
+  /* ---------- controls ---------- */
+  let mode = 'demo';
+  const sl = document.getElementById('sliders');
+  SIGNALS.forEach(([k, min, max, step, def]) => {
+    sl.insertAdjacentHTML('beforeend', '<div class="row"><span>' + k + '</span><input type="range" id="s_' + k + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + def + '" disabled><output id="o_' + k + '">--</output></div>');
+  });
+  function values() { const o = {}; SIGNALS.forEach(([k]) => { o[k] = Number(document.getElementById('s_' + k).value); }); return o; }
+  function pushSignals() { fetch('/signals', { method: 'POST', body: JSON.stringify({ mode, values: values() }) }); }
+  SIGNALS.forEach(([k]) => document.getElementById('s_' + k).addEventListener('input', (e) => {
+    document.getElementById('o_' + k).textContent = e.target.value; pushSignals();
+  }));
+  function setMode(m, fromServer) {
+    mode = m;
+    document.getElementById('mDemo').classList.toggle('on', m === 'demo');
+    document.getElementById('mManual').classList.toggle('on', m === 'manual');
+    SIGNALS.forEach(([k]) => {
+      const s = document.getElementById('s_' + k); s.disabled = m !== 'manual';
+      if (m === 'manual') { const v = lastValues[k]; if (v !== null && v !== undefined) s.value = v; document.getElementById('o_' + k).textContent = s.value; }
+    });
+    document.getElementById('sigNote').textContent = m === 'manual'
+      ? 'Manual values go in as raw SOME/IP values, the same fields and scaling the car sends (boost through FES displayBoostPressure), and the kit\'s car.js decodes them. Units here: rpm, km/h, deg C, bar.'
+      : 'Demo drive is the kit\'s simulator (sim.js). It has no boost signal, so boost reads "--" here, as on a car that does not fill that field.';
+    if (!fromServer) pushSignals();
+  }
+  document.getElementById('mDemo').onclick = () => setMode('demo');
+  document.querySelectorAll('#drive button').forEach((b) => b.onclick = () => {
+    document.querySelectorAll('#drive button').forEach((x) => x.classList.toggle('on', x === b));
+    fetch('/drive', { method: 'POST', body: JSON.stringify({ value: b.dataset.v === '' ? null : Number(b.dataset.v) }) });
+  });
+  document.getElementById('mManual').onclick = () => setMode('manual');
+  function renderSettings(m) {
+    settingVals = m.values || {}; dirty = true;
+    const box = document.getElementById('settings');
+    box.innerHTML = '';
+    m.schema.forEach((s) => {
+      const row = document.createElement('div'); row.className = 'srow';
+      const lab = document.createElement('span'); lab.textContent = s.label; row.appendChild(lab);
+      let ctl;
+      if (s.type === 'bool') {
+        ctl = document.createElement('input'); ctl.type = 'checkbox'; ctl.checked = !!m.values[s.key];
+        ctl.onchange = () => setSetting(s.key, ctl.checked);
+      } else {
+        ctl = document.createElement('select');
+        const opts = s.type === 'choice' ? s.options : s.steps.map((v) => [v, v + (s.unit ? ' ' + s.unit : '')]);
+        opts.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === m.values[s.key]) o.selected = true; ctl.appendChild(o); });
+        ctl.onchange = () => setSetting(s.key, s.type === 'number' ? Number(ctl.value) : ctl.value);
+      }
+      row.appendChild(ctl); box.appendChild(row);
+    });
+  }
+  function setSetting(key, value) { fetch('/setting', { method: 'POST', body: JSON.stringify({ key, value }) }); }
+  document.getElementById('restart').onclick = () => fetch('/restart', { method: 'POST' });
+})();
+</script>
+</body>
+</html>
